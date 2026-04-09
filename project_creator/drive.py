@@ -33,6 +33,11 @@ def build_service(creds: Credentials):
     return build("drive", "v3", credentials=creds)
 
 
+def build_sheets_service(creds: Credentials):
+    """Build and return an authenticated Sheets v4 service."""
+    return build("sheets", "v4", credentials=creds)
+
+
 # ---------------------------------------------------------------------------
 # Folder helpers
 # ---------------------------------------------------------------------------
@@ -183,6 +188,25 @@ def create_shortcut(service, file_id: str, name: str, parent_id: str) -> str:
     return result["id"]
 
 
+def write_cell(sheets_service, spreadsheet_id: str, sheet_name: str, cell: str, value: str) -> None:
+    """Write *value* to the given *cell* in *sheet_name* of *spreadsheet_id*.
+
+    Args:
+        sheets_service:  Authenticated Sheets v4 service.
+        spreadsheet_id:  The ID of the target Google Sheet.
+        sheet_name:      Exact name of the sheet tab (e.g. ``'2. SoW'``).
+        cell:            Cell address, e.g. ``C1``.
+        value:           Value to write as plain text.
+    """
+    range_notation = f"'{sheet_name}'!{cell}"
+    sheets_service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=range_notation,
+        valueInputOption="RAW",
+        body={"values": [[value]]},
+    ).execute()
+
+
 # ---------------------------------------------------------------------------
 # High-level orchestration
 # ---------------------------------------------------------------------------
@@ -195,7 +219,7 @@ def build_proposal_folder(
     month: str,
     account_folder_id: str,
 ) -> str:
-    """Create the full Proposals/<year>/<project (Mon YY)> hierarchy.
+    """Create the full Proposals/<year>/<project (Mon YYYY)> hierarchy.
 
     Creates any missing intermediate folders (Proposals, year) without
     touching existing ones.
@@ -213,7 +237,7 @@ def build_proposal_folder(
     """
     proposals_id = get_or_create_folder(service, "Proposals", account_folder_id)
     year_id = get_or_create_folder(service, year, proposals_id)
-    folder_name = f"{project} ({month} {year[2:]})"
+    folder_name = f"{project} ({month} {year})"
     project_id = get_or_create_folder(service, folder_name, year_id)
     return project_id
 

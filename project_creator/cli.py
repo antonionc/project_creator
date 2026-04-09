@@ -23,6 +23,7 @@ from .config import (
 from .drive import (
     build_proposal_folder,
     build_service,
+    build_sheets_service,
     copy_file,
     create_shortcut,
     get_folder_url,
@@ -30,6 +31,7 @@ from .drive import (
     parse_file_id,
     rename_file,
     search_folders,
+    write_cell,
 )
 
 console = Console()
@@ -211,6 +213,7 @@ def create(
     try:
         creds = get_credentials()
         service = build_service(creds)
+        sheets_service = build_sheets_service(creds)
     except FileNotFoundError as exc:
         console.print(f"[red]✗[/red]  {exc}")
         raise SystemExit(1)
@@ -224,7 +227,7 @@ def create(
         raise SystemExit(0)
 
     # ── Build folder hierarchy ─────────────────────────────────────────────
-    folder_label = f"{project} ({month} {year[2:]})"
+    folder_label = f"{project} ({month} {year})"
     console.print(
         f"\n[cyan]→[/cyan]  Building [bold]Proposals/{year}/{folder_label}[/bold]"
     )
@@ -241,7 +244,7 @@ def create(
     )
 
     # ── File base name (used for all three files) ──────────────────────────
-    file_base = f"{account} - {project} ({month} {year[2:]})"
+    file_base = f"{account} - {project} ({month} {year})"
 
     # ── Copy Proposal template ─────────────────────────────────────────────
     _copy_template(
@@ -252,8 +255,8 @@ def create(
         label="Proposal",
     )
 
-    # ── Copy Purchase Summary & SOW template ───────────────────────────────
-    _copy_template(
+    # Copy Purchase Summary & SOW template
+    sow_file_id = _copy_template(
         service,
         file_id=config["templates"]["purchase_summary_sow"],
         name=f"{file_base} - Purchase Summary & SOW",
@@ -261,9 +264,9 @@ def create(
         label="Purchase Summary & SOW",
     )
 
-    # ── GFA workflow ───────────────────────────────────────────────────────
+    # GFA workflow
     if not skip_gfa:
-        _handle_gfa(service, config, file_base, project_folder_id)
+        _handle_gfa(service, sheets_service, config, file_base, project_folder_id, sow_file_id)
     else:
         console.print("[dim]GFA step skipped (--skip-gfa).[/dim]")
 
@@ -341,23 +344,27 @@ def _copy_template(
     name: str,
     parent_id: str,
     label: str,
-) -> None:
-    """Copy a template file and log the result."""
+) -> Optional[str]:
+    """Copy a template file, log the result, and return the new file ID (or None on error)."""
     console.print(f"[cyan]→[/cyan]  Copying {label} template...")
     try:
-        copy_file(service, file_id, name, parent_id)
+        new_id = copy_file(service, file_id, name, parent_id)
         console.print(f"[green]✔[/green]  Copied:  [bold]{name}[/bold]")
+        return new_id
     except Exception as exc:
         console.print(f"[red]✗[/red]  Failed to copy {label} template: {exc}")
+        return None
 
 
 def _handle_gfa(
     service,
+    sheets_service,
     config: dict,
     file_base: str,
     project_folder_id: str,
+    sow_file_id: Optional[str],
 ) -> None:
-    """Open the GFA form, wait for the user to paste the URL, then rename + shortcut."""
+    """Open the GFA form, wait for the user to paste the URL, then rename + shortcut + write cell."""
     gfa_form_url = config["templates"].get("gfa_form_url", "https://red.ht/gfa")
     gfa_name = f"{file_base} - GFA"
 
@@ -380,6 +387,7 @@ def _handle_gfa(
         return
 
     gfa_file_id = parse_file_id(gfa_input.strip())
+    gfa_url = f"https://docs.google.com/spreadsheets/d/{gfa_file_id}/edit"
 
     # Rename original
     try:
@@ -399,3 +407,15 @@ def _handle_gfa(
         )
     except Exception as exc:
         console.print(f"[red]✗[/red]  Failed to create GFA shortcut: {exc}")
+
+    # Write GFA URL to '2. SoW'!C1 in the Purchase Summary & SOW sheet
+    if sow_file_id:
+        try:
+            write_cell(sheets_service, sow_file_id, "2. SoW", "C1", gfa_url)
+            console.print(
+                f"[green]✔[/green]  Wrote GFA URL to [bold]'2. SoW'!C1[/bold] in Purchase Summary & SOW"
+            )
+        except Exception as exc:
+            console.print(
+                f"[yellow]⚠[/yellow]  Could not write GFA URL to SOW sheet: {exc}"
+            )
