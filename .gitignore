@@ -1,0 +1,18 @@
+# Google OAuth credentials — NEVER commit these
+credentials.json
+token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

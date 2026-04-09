@@ -1,0 +1,15 @@
+# Red Hat Proposal Creator — example configuration
+# Copy this file to ~/.config/project_creator/config.yaml and fill in the values.
+# You can use either the raw file ID or the full Google Drive URL for any ID field;
+# the tool will extract the ID automatically.
+
+# IDs of the master template files in your Google Drive.
+templates:
+  proposal: "GOOGLE_DRIVE_FILE_ID_HERE"              # Google Slides — Proposal template
+  purchase_summary_sow: "GOOGLE_DRIVE_FILE_ID_HERE"  # Google Sheets — Purchase Summary & SOW
+  # The GFA is generated via a Google Form, not a template file.
+  gfa_form_url: "https://red.ht/gfa"
+
+# Optional: restrict account folder searches to a specific Shared Drive or parent folder.
+# Leave empty ("") to search across all of Google Drive accessible to your account.
+search_root_id: ""
