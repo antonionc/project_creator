@@ -22,3 +22,22 @@ project-creator = "project_creator.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["project_creator"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+
+[tool.coverage.run]
+source = ["project_creator"]
+omit = ["project_creator/__main__.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 70
