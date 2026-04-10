@@ -34,8 +34,10 @@ def load_config() -> Dict[str, Any]:
 def save_config(config: Dict[str, Any]) -> None:
     """Persist config to ~/.config/project_creator/config.yaml."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.chmod(0o700)
     with open(CONFIG_PATH, "w") as fh:
         yaml.dump(config, fh, default_flow_style=False, allow_unicode=True)
+    CONFIG_PATH.chmod(0o600)
 
 
 def validate_config(config: Dict[str, Any]) -> List[str]:

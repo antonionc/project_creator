@@ -82,7 +82,8 @@ def search_folders(
     Returns:
         List of dicts with keys ``id``, ``name``, ``path``.
     """
-    escaped = name.replace("'", "\\'")
+    # Escape backslashes first, then single quotes.
+    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
     q = f"mimeType='{_FOLDER_MIME}' and name='{escaped}' and trashed=false"
     if parent_id:
         q += f" and '{parent_id}' in parents"
@@ -113,7 +114,8 @@ def get_or_create_folder(service, name: str, parent_id: str) -> str:
     Returns:
         Google Drive folder ID (str).
     """
-    escaped = name.replace("'", "\\'")
+    # Escape backslashes first, then single quotes.
+    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
     q = (
         f"mimeType='{_FOLDER_MIME}' and name='{escaped}' "
         f"and '{parent_id}' in parents and trashed=false"

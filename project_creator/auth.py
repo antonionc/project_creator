@@ -45,6 +45,8 @@ def get_credentials() -> Credentials:
 
         # Persist token for future runs
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_DIR.chmod(0o700)
         _TOKEN_PATH.write_text(creds.to_json())
+        _TOKEN_PATH.chmod(0o600)
 
     return creds
