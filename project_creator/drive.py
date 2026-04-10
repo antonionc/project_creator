@@ -207,6 +207,35 @@ def write_cell(sheets_service, spreadsheet_id: str, sheet_name: str, cell: str, 
     ).execute()
 
 
+def customize_gfa(sheets_service, gfa_file_id: str, project_name: str) -> None:
+    """Write standard proposal metadata into the GFA sheet's 'New P&\u0026L Summary' tab.
+
+    All four writes are sent in a single batchUpdate call for efficiency.
+    ``USER_ENTERED`` mode is used so that ``True`` is stored as a boolean
+    (checked checkbox) and dropdown values are validated against the sheet's
+    data-validation rules.
+
+    Args:
+        sheets_service: Authenticated Sheets v4 service.
+        gfa_file_id:    ID of the GFA Google Sheet.
+        project_name:   Project name to write into C12.
+    """
+    tab = "New P&L Summary"
+    updates = [
+        {"range": f"'{tab}'!C12", "values": [[project_name]]},  # Project name
+        {"range": f"'{tab}'!E6",  "values": [["New SOW"]]},      # Engagement type dropdown
+        {"range": f"'{tab}'!A16", "values": [[True]]},            # Boolean checkbox
+        {"range": f"'{tab}'!C9",  "values": [["Iberia"]]},        # Region dropdown
+    ]
+    sheets_service.spreadsheets().values().batchUpdate(
+        spreadsheetId=gfa_file_id,
+        body={
+            "valueInputOption": "USER_ENTERED",
+            "data": updates,
+        },
+    ).execute()
+
+
 # ---------------------------------------------------------------------------
 # High-level orchestration
 # ---------------------------------------------------------------------------

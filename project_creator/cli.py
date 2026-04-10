@@ -26,6 +26,7 @@ from .drive import (
     build_sheets_service,
     copy_file,
     create_shortcut,
+    customize_gfa,
     get_folder_url,
     get_or_create_folder,
     parse_file_id,
@@ -266,7 +267,7 @@ def create(
 
     # GFA workflow
     if not skip_gfa:
-        _handle_gfa(service, sheets_service, config, file_base, project_folder_id, sow_file_id)
+        _handle_gfa(service, sheets_service, config, file_base, project_folder_id, sow_file_id, project)
     else:
         console.print("[dim]GFA step skipped (--skip-gfa).[/dim]")
 
@@ -363,8 +364,9 @@ def _handle_gfa(
     file_base: str,
     project_folder_id: str,
     sow_file_id: Optional[str],
+    project: str,
 ) -> None:
-    """Open the GFA form, wait for the user to paste the URL, then rename + shortcut + write cell."""
+    """Open the GFA form, wait for the user to paste the URL, then rename + shortcut + write cells."""
     gfa_form_url = config["templates"].get("gfa_form_url", "https://red.ht/gfa")
     gfa_name = f"{file_base} - GFA"
 
@@ -419,3 +421,17 @@ def _handle_gfa(
             console.print(
                 f"[yellow]⚠[/yellow]  Could not write GFA URL to SOW sheet: {exc}"
             )
+
+    # Customize the GFA sheet ('New P&L Summary' tab)
+    console.print("[cyan]→[/cyan]  Customizing GFA sheet...")
+    try:
+        customize_gfa(sheets_service, gfa_file_id, project)
+        console.print(
+            "[green]✔[/green]  GFA customized:\n"
+            "   • [bold]'New P&L Summary'!C12[/bold] ← project name\n"
+            "   • [bold]'New P&L Summary'!E6[/bold]  ← New SOW\n"
+            "   • [bold]'New P&L Summary'!A16[/bold] ← TRUE\n"
+            "   • [bold]'New P&L Summary'!C9[/bold]  ← Iberia"
+        )
+    except Exception as exc:
+        console.print(f"[yellow]⚠[/yellow]  Could not customize GFA sheet: {exc}")
