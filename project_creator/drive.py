@@ -268,7 +268,7 @@ def build_proposal_folder(
     """
     proposals_id = get_or_create_folder(service, "Proposals", account_folder_id)
     year_id = get_or_create_folder(service, year, proposals_id)
-    folder_name = f"{project} ({month} {year})"
+    folder_name = f"{account} - {project} ({month} {year})"
     project_id = get_or_create_folder(service, folder_name, year_id)
     return project_id
 

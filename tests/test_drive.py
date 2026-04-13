@@ -361,7 +361,7 @@ class TestBuildProposalFolder:
         service.files().create.side_effect = _create_side_effect
         build_proposal_folder(service, "Acme", "Beta Project", "2026", "Jun", "ACC")
         # Third create = leaf project folder
-        assert created_bodies[2]["name"] == "Beta Project (Jun 2026)"
+        assert created_bodies[2]["name"] == "Acme - Beta Project (Jun 2026)"
 
     def test_reuses_existing_proposals_folder(self):
         service = _mock_service()
