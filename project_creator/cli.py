@@ -3,7 +3,7 @@
 from __future__ import annotations  # enables X | Y union syntax on Python 3.9
 
 import webbrowser
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from typing import Optional
 
@@ -33,7 +33,11 @@ from .drive import (
     rename_file,
     search_folders,
     write_cell,
+    find_file_by_name,
 )
+from .gmail import build_gmail_service, wait_for_gfa_email
+from .gfa_form import fill_gfa_form
+import time
 
 console = Console()
 
@@ -141,6 +145,25 @@ def setup() -> None:
     )
     config["search_root_id"] = parse_file_id(root_raw) if root_raw.strip() else ""
 
+    # ── 5. GFA defaults ────────────────────────────────────────────────────
+    console.print(
+        "\n[bold]GFA Defaults[/bold]\n"
+    )
+    gfa_config = config.get("gfa", {})
+    default_geo = Prompt.ask(
+        "  Default GEO for GFA form",
+        default=gfa_config.get("default_geo", "EMEA"),
+    )
+    auto_submit_raw = Prompt.ask(
+        "  Submit form automatically? (y/N)",
+        default="y" if gfa_config.get("submit_automatically") else "n",
+    )
+    
+    if "gfa" not in config:
+        config["gfa"] = {}
+    config["gfa"]["default_geo"] = default_geo
+    config["gfa"]["submit_automatically"] = auto_submit_raw.lower().startswith("y")
+
     save_config(config)
     console.print(
         f"\n[green]✔[/green]  Configuration saved to [bold]{CONFIG_PATH}[/bold]\n"
@@ -155,12 +178,14 @@ def setup() -> None:
 @main.command()
 @click.option("--account", "-a", default=None, help="Customer account name.")
 @click.option("--project", "-p", default=None, help="Project name.")
+@click.option("--opportunity-id", "-o", default=None, help="Opportunity number for GFA form.")
 @click.option("--year", "-y", default=None, help="Year (e.g. 2026). Defaults to current year.")
 @click.option("--month", "-m", default=None, help="Month abbreviation (e.g. Apr). Defaults to current month.")
 @click.option("--skip-gfa", is_flag=True, default=False, help="Skip the GFA form step.")
 def create(
     account: str | None,
     project: str | None,
+    opportunity_id: str | None,
     year: str | None,
     month: str | None,
     skip_gfa: bool,
@@ -202,6 +227,9 @@ def create(
         account = Prompt.ask("  [bold]Account name[/bold]")
     if not project:
         project = Prompt.ask("  [bold]Project name[/bold]")
+    if not opportunity_id:
+        # Prompt only if missing, default to project
+        opportunity_id = Prompt.ask("  [bold]Opportunity number[/bold]", default=project)
     if not year:
         year = Prompt.ask("  [bold]Year[/bold]", default=str(now.year))
     if not month:
@@ -215,6 +243,7 @@ def create(
         creds = get_credentials()
         service = build_service(creds)
         sheets_service = build_sheets_service(creds)
+        gmail_service = build_gmail_service(creds)
     except FileNotFoundError as exc:
         console.print(f"[red]✗[/red]  {exc}")
         raise SystemExit(1)
@@ -267,7 +296,7 @@ def create(
 
     # GFA workflow
     if not skip_gfa:
-        _handle_gfa(service, sheets_service, config, file_base, project_folder_id, sow_file_id, project)
+        _handle_gfa(service, sheets_service, gmail_service, config, file_base, project_folder_id, sow_file_id, project, account, opportunity_id)
     else:
         console.print("[dim]GFA step skipped (--skip-gfa).[/dim]")
 
@@ -346,7 +375,12 @@ def _copy_template(
     parent_id: str,
     label: str,
 ) -> Optional[str]:
-    """Copy a template file, log the result, and return the new file ID (or None on error)."""
+    """Copy a template file, log the result, and return the new file ID (or None on error). Skip if exists."""
+    existing_id = find_file_by_name(service, name, parent_id)
+    if existing_id:
+        console.print(f"[green]✔[/green]  {label} exists: [bold]{name}[/bold]")
+        return existing_id
+
     console.print(f"[cyan]→[/cyan]  Copying {label} template...")
     try:
         new_id = copy_file(service, file_id, name, parent_id)
@@ -360,27 +394,68 @@ def _copy_template(
 def _handle_gfa(
     service,
     sheets_service,
+    gmail_service,
     config: dict,
     file_base: str,
     project_folder_id: str,
     sow_file_id: Optional[str],
     project: str,
+    account: str,
+    opportunity_id: str,
 ) -> None:
-    """Open the GFA form, wait for the user to paste the URL, then rename + shortcut + write cells."""
+    """Open the GFA form, wait for the email, then rename + shortcut + write cells."""
     gfa_form_url = config["templates"].get("gfa_form_url", "https://red.ht/gfa")
     gfa_name = f"{file_base} - GFA"
 
-    console.print(
-        f"\n[cyan]→[/cyan]  Opening GFA form: [link={gfa_form_url}]{gfa_form_url}[/link]"
-    )
-    webbrowser.open(gfa_form_url)
+    # Check if GFA shortcut already exists in the project folder
+    existing_gfa_sc = find_file_by_name(service, gfa_name, project_folder_id)
+    if existing_gfa_sc:
+        console.print(f"[green]✔[/green]  GFA shortcut exists: [bold]{gfa_name}[/bold]")
+        return
 
-    console.print(
-        "  [dim]Fill in the form. Once you receive the generated sheet by email,[/dim]\n"
-        "  [dim]paste its URL below. Press Enter to skip and add manually later.[/dim]\n"
+    # Fill form via playwright
+    today = date.today()
+    try:
+        from dateutil.relativedelta import relativedelta
+        term_start = today.replace(day=1) + relativedelta(months=1)
+        term_end = term_start + relativedelta(years=1) - timedelta(days=1)
+    except ImportError:
+        # Fallback if dateutil is missing for some reason
+        month = today.month + 1 if today.month < 12 else 1
+        year = today.year if today.month < 12 else today.year + 1
+        term_start = date(year, month, 1)
+        term_end = date(year + 1, month, 1) - timedelta(days=1)
+
+    geo = config.get("gfa", {}).get("default_geo", "EMEA")
+    auto_submit = config.get("gfa", {}).get("submit_automatically", False)
+
+    console.print(f"\n[cyan]→[/cyan] Opening GFA form (Browser Automation)")
+    
+    start_time = int(time.time())
+
+    fill_gfa_form(
+        form_url=gfa_form_url,
+        account=account,
+        opportunity_id=opportunity_id,
+        geo=geo,
+        term_start=term_start,
+        term_end=term_end,
+        auto_submit=auto_submit,
     )
 
-    gfa_input = Prompt.ask("  GFA sheet URL or file ID", default="")
+    gfa_url = wait_for_gfa_email(
+        gmail_service,
+        account=account,
+        opportunity_id=opportunity_id,
+        start_time=start_time,
+    )
+
+    if gfa_url:
+        console.print(f"\n[green]✔[/green]  Found GFA email: {gfa_url}")
+        gfa_input = gfa_url
+    else:
+        console.print("\n[yellow]⚠[/yellow]  Email not received within timeout.")
+        gfa_input = Prompt.ask("  Paste GFA sheet URL or file ID (or Enter to skip)", default="")
 
     if not gfa_input.strip():
         console.print(

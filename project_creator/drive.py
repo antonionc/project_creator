@@ -103,6 +103,30 @@ def search_folders(
     return folders
 
 
+def find_file_by_name(service, name: str, parent_id: str) -> Optional[str]:
+    """Find a file (or shortcut) by exact name within a parent folder.
+
+    Args:
+        service:   Authenticated Drive v3 service.
+        name:      Exact name of the file to search for.
+        parent_id: ID of the parent folder.
+
+    Returns:
+        Google Drive file ID (str) or None if not found.
+    """
+    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
+    q = f"name='{escaped}' and '{parent_id}' in parents and trashed=false"
+    results = service.files().list(
+        q=q,
+        fields="files(id)",
+        **_LIST_KWARGS,
+    ).execute()
+    files = results.get("files", [])
+    if files:
+        return files[0]["id"]
+    return None
+
+
 def get_or_create_folder(service, name: str, parent_id: str) -> str:
     """Return the ID of an existing child folder named *name*, or create it.
 

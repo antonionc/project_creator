@@ -3,11 +3,15 @@
 from pathlib import Path
 from typing import Optional
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+SCOPES = [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
 
 CONFIG_DIR = Path.home() / ".config" / "project_creator"
 _CREDS_PATH = CONFIG_DIR / "credentials.json"
@@ -38,7 +42,15 @@ def get_credentials() -> Credentials:
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                _TOKEN_PATH.unlink(missing_ok=True)
+                raise RuntimeError(
+                    "OAuth scopes have changed or token is invalid.\n"
+                    "Your old token.json has been removed.\n"
+                    "Please run:  project-creator setup  to re-authenticate."
+                )
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(_CREDS_PATH), SCOPES)
             creds = flow.run_local_server(port=0)
