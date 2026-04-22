@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
+from google.auth.exceptions import RefreshError
 
 import project_creator.auth as auth_module
 from project_creator.auth import get_credentials, SCOPES
@@ -141,6 +142,32 @@ class TestGetCredentialsExpiredToken:
 
         mode = stat.S_IMODE(token_path.stat().st_mode)
         assert mode == 0o600
+
+
+# ---------------------------------------------------------------------------
+# get_credentials — RefreshError during token refresh
+# ---------------------------------------------------------------------------
+
+class TestGetCredentialsRefreshError:
+    def test_refresh_error_deletes_token_and_raises_runtime(self, tmp_auth):
+        """A RefreshError during refresh should delete the stale token and raise RuntimeError."""
+        config_dir, creds_path, token_path = tmp_auth
+        _write_file(creds_path)
+        _write_file(token_path, '{"token": "stale"}')
+
+        mock_creds = MagicMock()
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = "REFRESH"
+        mock_creds.refresh.side_effect = RefreshError("token revoked")
+
+        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds), \
+             patch("project_creator.auth.Request"):
+            with pytest.raises(RuntimeError, match="setup"):
+                get_credentials()
+
+        # token.json must be deleted so the user can re-authenticate cleanly
+        assert not token_path.exists()
 
 
 # ---------------------------------------------------------------------------

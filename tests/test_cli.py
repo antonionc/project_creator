@@ -80,7 +80,8 @@ class TestSetupCommand:
             result = runner.invoke(
                 main,
                 ["setup"],
-                input="PROP\nSOW\nhttps://red.ht/gfa\n\n",  # prompts
+                # proposal, sow, gfa_url, search root, default_geo, auto_submit
+                input="PROP\nSOW\nhttps://red.ht/gfa\n\n\n\n",
             )
 
         assert mock_save.called
@@ -127,32 +128,32 @@ class TestCreateCommandConfigValidation:
 # ---------------------------------------------------------------------------
 
 class TestCreateCommandHappyPath:
-    def _setup_mocks(self):
-        """Return a dict of patch targets → mock return values."""
+    def _base_patches(self):
+        """Common patch targets for the create command happy path."""
         mock_creds = MagicMock()
         mock_service = MagicMock()
         mock_sheets = MagicMock()
-
-        # search_folders returns one match
+        mock_gmail = MagicMock()
         mock_match = {"id": "ACCT_ID", "name": "Acme", "path": "Root > Acme"}
-
-        return mock_creds, mock_service, mock_sheets, mock_match
+        return mock_creds, mock_service, mock_sheets, mock_gmail, mock_match
 
     def test_successful_create_with_skip_gfa(self, runner):
-        mock_creds, mock_service, mock_sheets, mock_match = self._setup_mocks()
+        mock_creds, mock_service, mock_sheets, mock_gmail, mock_match = self._base_patches()
 
         with patch("project_creator.cli.load_config", return_value=_valid_config()), \
              patch("project_creator.cli.get_credentials", return_value=mock_creds), \
              patch("project_creator.cli.build_service", return_value=mock_service), \
              patch("project_creator.cli.build_sheets_service", return_value=mock_sheets), \
+             patch("project_creator.cli.build_gmail_service", return_value=mock_gmail), \
              patch("project_creator.cli.search_folders", return_value=[mock_match]), \
              patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
              patch("project_creator.cli.get_folder_url", return_value="https://drive.google.com/xyz"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
-                 "--year=2026", "--month=Apr", "--skip-gfa"],
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa"],
                 input="y\n",  # confirm account folder
             )
 
@@ -164,20 +165,23 @@ class TestCreateCommandHappyPath:
         from datetime import datetime
         current_year = str(datetime.now().year)
 
-        mock_creds, mock_service, mock_sheets, mock_match = self._setup_mocks()
+        mock_creds, mock_service, mock_sheets, mock_gmail, mock_match = self._base_patches()
 
         with patch("project_creator.cli.load_config", return_value=_valid_config()), \
              patch("project_creator.cli.get_credentials", return_value=mock_creds), \
              patch("project_creator.cli.build_service", return_value=mock_service), \
              patch("project_creator.cli.build_sheets_service", return_value=mock_sheets), \
+             patch("project_creator.cli.build_gmail_service", return_value=mock_gmail), \
              patch("project_creator.cli.search_folders", return_value=[mock_match]), \
              patch("project_creator.cli.build_proposal_folder", return_value="X") as mock_bpf, \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="C"), \
              patch("project_creator.cli.get_folder_url", return_value="http://x"):
             result = runner.invoke(
                 main,
-                ["create", "--account=Acme", "--project=Alpha", "--skip-gfa"],
-                input=f"\n\n",  # accept defaults for year and month
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--skip-gfa"],
+                input="y\n\n",  # accept year default, accept month default, confirm folder
             )
 
         if result.exit_code == 0:
@@ -186,23 +190,22 @@ class TestCreateCommandHappyPath:
 
     def test_month_normalized(self, runner):
         """Month should be capitalized regardless of input case."""
-        mock_creds = MagicMock()
-        mock_service = MagicMock()
-        mock_sheets = MagicMock()
-        mock_match = {"id": "ACCT_ID", "name": "Acme", "path": "Root > Acme"}
+        mock_creds, mock_service, mock_sheets, mock_gmail, mock_match = self._base_patches()
 
         with patch("project_creator.cli.load_config", return_value=_valid_config()), \
              patch("project_creator.cli.get_credentials", return_value=mock_creds), \
              patch("project_creator.cli.build_service", return_value=mock_service), \
              patch("project_creator.cli.build_sheets_service", return_value=mock_sheets), \
+             patch("project_creator.cli.build_gmail_service", return_value=mock_gmail), \
              patch("project_creator.cli.search_folders", return_value=[mock_match]), \
              patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID") as mock_bpf, \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
              patch("project_creator.cli.get_folder_url", return_value="http://x"):
             runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
-                 "--year=2026", "--month=apr", "--skip-gfa"],
+                 "--opportunity-id=OPP01", "--year=2026", "--month=apr", "--skip-gfa"],
                 input="y\n",
             )
 
@@ -220,11 +223,12 @@ class TestResolveAccountFolder:
              patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
              patch("project_creator.cli.build_service", return_value=MagicMock()), \
              patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
              patch("project_creator.cli.search_folders", return_value=[]):
             result = runner.invoke(
                 main,
                 ["create", "--account=NotExist", "--project=P",
-                 "--year=2026", "--month=Apr", "--skip-gfa"],
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa"],
                 input="n\n",  # decline to create new folder
             )
 
@@ -236,11 +240,12 @@ class TestResolveAccountFolder:
              patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
              patch("project_creator.cli.build_service", return_value=MagicMock()), \
              patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
              patch("project_creator.cli.search_folders", return_value=[]):
             result = runner.invoke(
                 main,
                 ["create", "--account=NotExist", "--project=P",
-                 "--year=2026", "--month=Apr", "--skip-gfa"],
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa"],
                 input="y\n\n",  # accept create, but leave parent blank
             )
 
@@ -256,14 +261,16 @@ class TestResolveAccountFolder:
              patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
              patch("project_creator.cli.build_service", return_value=MagicMock()), \
              patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
              patch("project_creator.cli.search_folders", return_value=matches), \
              patch("project_creator.cli.build_proposal_folder", return_value="X"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="C"), \
              patch("project_creator.cli.get_folder_url", return_value="http://x"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=P",
-                 "--year=2026", "--month=Apr", "--skip-gfa"],
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa"],
                 input="2\n",  # choose second folder
             )
 
@@ -276,37 +283,50 @@ class TestResolveAccountFolder:
 # ---------------------------------------------------------------------------
 
 class TestHandleGfa:
-    def test_gfa_skipped_with_flag(self, runner):
+    def _gfa_patches(self, find_existing_gfa=False):
+        """Returns patch targets needed for any GFA workflow test."""
         mock_match = {"id": "ACCT_ID", "name": "Acme", "path": "Root > Acme"}
+        # find_file_by_name: None for template copies; optionally an ID for GFA shortcut check
+        find_side = MagicMock(side_effect=[None, None, "GFA_SC" if find_existing_gfa else None])
+        return mock_match, find_side
+
+    def test_gfa_skipped_with_flag(self, runner):
+        mock_match, _ = self._gfa_patches()
         with patch("project_creator.cli.load_config", return_value=_valid_config()), \
              patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
              patch("project_creator.cli.build_service", return_value=MagicMock()), \
              patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
              patch("project_creator.cli.search_folders", return_value=[mock_match]), \
              patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
              patch("project_creator.cli.get_folder_url", return_value="http://x"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
-                 "--year=2026", "--month=Apr", "--skip-gfa"],
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa"],
                 input="y\n",
             )
 
         assert "skipped" in result.output.lower()
         assert result.exit_code == 0
 
-    def test_gfa_url_opened_in_browser(self, runner):
-        mock_match = {"id": "ACCT_ID", "name": "Acme", "path": "Root > Acme"}
+    def test_gfa_form_opened_via_playwright(self, runner):
+        """fill_gfa_form must be called when GFA step is not skipped."""
+        mock_match, _ = self._gfa_patches()
         with patch("project_creator.cli.load_config", return_value=_valid_config()), \
              patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
              patch("project_creator.cli.build_service", return_value=MagicMock()), \
              patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
              patch("project_creator.cli.search_folders", return_value=[mock_match]), \
              patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
              patch("project_creator.cli.get_folder_url", return_value="http://x"), \
-             patch("project_creator.cli.webbrowser.open") as mock_open, \
+             patch("project_creator.cli.fill_gfa_form") as mock_fill, \
+             patch("project_creator.cli.wait_for_gfa_email", return_value="https://docs.google.com/spreadsheets/d/GFA123/edit"), \
              patch("project_creator.cli.rename_file"), \
              patch("project_creator.cli.create_shortcut"), \
              patch("project_creator.cli.write_cell"), \
@@ -314,28 +334,33 @@ class TestHandleGfa:
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
-                 "--year=2026", "--month=Apr"],
-                input="y\nhttps://docs.google.com/spreadsheets/d/GFA123/edit\n",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr"],
+                input="y\n",
             )
 
-        mock_open.assert_called_once_with("https://red.ht/gfa")
+        mock_fill.assert_called_once()
+        assert result.exit_code == 0
 
     def test_gfa_skipped_when_user_leaves_url_blank(self, runner):
-        mock_match = {"id": "ACCT_ID", "name": "Acme", "path": "Root > Acme"}
+        mock_match, _ = self._gfa_patches()
         with patch("project_creator.cli.load_config", return_value=_valid_config()), \
              patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
              patch("project_creator.cli.build_service", return_value=MagicMock()), \
              patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
              patch("project_creator.cli.search_folders", return_value=[mock_match]), \
              patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
              patch("project_creator.cli.get_folder_url", return_value="http://x"), \
-             patch("project_creator.cli.webbrowser.open"), \
+             patch("project_creator.cli.fill_gfa_form"), \
+             patch("project_creator.cli.wait_for_gfa_email", return_value=None), \
              patch("project_creator.cli.rename_file") as mock_rename:
             result = runner.invoke(
                 main,
-                ["create", "--account=Acme", "--project=Alpha", "--year=2026", "--month=Apr"],
-                input="y\n\n",  # blank GFA URL → skip
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr"],
+                input="y\n\n",  # confirm folder, then blank GFA URL → skip
             )
 
         mock_rename.assert_not_called()
@@ -344,7 +369,7 @@ class TestHandleGfa:
     def test_rename_failure_does_not_abort(self, runner):
         """Rename errors are warnings — the workflow should continue."""
         from googleapiclient.errors import HttpError
-        mock_match = {"id": "ACCT_ID", "name": "Acme", "path": "Root > Acme"}
+        mock_match, _ = self._gfa_patches()
 
         def _bad_rename(*args, **kwargs):
             resp = MagicMock(); resp.status = 403
@@ -354,23 +379,58 @@ class TestHandleGfa:
              patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
              patch("project_creator.cli.build_service", return_value=MagicMock()), \
              patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
              patch("project_creator.cli.search_folders", return_value=[mock_match]), \
              patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
              patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
              patch("project_creator.cli.get_folder_url", return_value="http://x"), \
-             patch("project_creator.cli.webbrowser.open"), \
+             patch("project_creator.cli.fill_gfa_form"), \
+             patch("project_creator.cli.wait_for_gfa_email",
+                   return_value="https://docs.google.com/spreadsheets/d/GFA123/edit"), \
              patch("project_creator.cli.rename_file", side_effect=_bad_rename), \
              patch("project_creator.cli.create_shortcut"), \
              patch("project_creator.cli.write_cell"), \
              patch("project_creator.cli.customize_gfa"):
             result = runner.invoke(
                 main,
-                ["create", "--account=Acme", "--project=Alpha", "--year=2026", "--month=Apr"],
-                input="y\nhttps://docs.google.com/spreadsheets/d/GFA123/edit\n",
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr"],
+                input="y\n",
             )
 
         # Should warn but NOT exit with 1
         assert "⚠" in result.output or "Could not rename" in result.output
+        assert result.exit_code == 0
+
+    def test_gfa_shortcut_already_exists_skips_workflow(self, runner):
+        """If GFA shortcut already exists in the project folder, skip the whole GFA step."""
+        mock_match = {"id": "ACCT_ID", "name": "Acme", "path": "Root > Acme"}
+
+        # First two calls (proposal, SOW) return None; third (GFA check) returns an ID
+        find_side_effect = [None, None, "EXISTING_SC_ID"]
+
+        with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+             patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
+             patch("project_creator.cli.build_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
+             patch("project_creator.cli.search_folders", return_value=[mock_match]), \
+             patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", side_effect=find_side_effect), \
+             patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
+             patch("project_creator.cli.get_folder_url", return_value="http://x"), \
+             patch("project_creator.cli.fill_gfa_form") as mock_fill:
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr"],
+                input="y\n",
+            )
+
+        # Playwright should NOT be invoked when shortcut already exists
+        mock_fill.assert_not_called()
+        assert "exists" in result.output.lower()
         assert result.exit_code == 0
 
 

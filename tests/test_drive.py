@@ -23,6 +23,7 @@ from project_creator.drive import (
     write_cell,
     _FOLDER_MIME,
     _SHORTCUT_MIME,
+    find_file_by_name,
 )
 
 
@@ -94,6 +95,31 @@ class TestGetFolderPath:
         path = _get_folder_path(service, "START", max_depth=2)
         # 2 calls; parts = ["Node", "Node"] reversed = "Node > Node"
         assert path.count("Node") == 2
+
+
+# ---------------------------------------------------------------------------
+# find_file_by_name
+# ---------------------------------------------------------------------------
+
+class TestFindFileByName:
+    def test_returns_none_when_not_found(self):
+        service = _mock_service()
+        service.files().list().execute.return_value = {"files": []}
+        result = find_file_by_name(service, "Missing File", "PARENT_ID")
+        assert result is None
+
+    def test_returns_id_when_found(self):
+        service = _mock_service()
+        service.files().list().execute.return_value = {"files": [{"id": "FOUND_ID"}]}
+        result = find_file_by_name(service, "Existing File", "PARENT_ID")
+        assert result == "FOUND_ID"
+
+    def test_query_escapes_special_chars(self):
+        service = _mock_service()
+        service.files().list().execute.return_value = {"files": []}
+        find_file_by_name(service, "O'Brien File", "PAR")
+        q = service.files().list.call_args[1]["q"]
+        assert "O\\'Brien" in q
 
 
 # ---------------------------------------------------------------------------
