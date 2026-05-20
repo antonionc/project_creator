@@ -255,6 +255,21 @@ def create_shortcut(service, file_id: str, name: str, parent_id: str) -> str:
     return result["id"]
 
 
+def add_commenter_permission(service, file_id: str, domain: str) -> None:
+    """Grant commenter permission to anyone in the specified domain who has the link."""
+    body = {
+        "type": "domain",
+        "role": "commenter",
+        "domain": domain,
+    }
+    service.permissions().create(
+        fileId=file_id,
+        body=body,
+        supportsAllDrives=True,
+    ).execute()
+
+
+
 def write_cell(sheets_service, spreadsheet_id: str, sheet_name: str, cell: str, value: str) -> None:
     """Write *value* to the given *cell* in *sheet_name* of *spreadsheet_id*.
 

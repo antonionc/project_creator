@@ -329,6 +329,7 @@ class TestHandleGfa:
              patch("project_creator.cli.wait_for_gfa_email", return_value="https://docs.google.com/spreadsheets/d/GFA123/edit"), \
              patch("project_creator.cli.rename_file"), \
              patch("project_creator.cli.create_shortcut"), \
+             patch("project_creator.cli.add_commenter_permission") as mock_perm, \
              patch("project_creator.cli.write_cell"), \
              patch("project_creator.cli.customize_gfa"):
             result = runner.invoke(
@@ -339,6 +340,42 @@ class TestHandleGfa:
             )
 
         mock_fill.assert_called_once()
+        mock_perm.assert_called_once_with(
+            mock_service := mock_perm.call_args[0][0],
+            "GFA123",
+            "redhat.com"
+        )
+        assert result.exit_code == 0
+        assert "commenter access granted" in result.output
+
+    def test_permission_failure_does_not_abort(self, runner):
+        """Permission update errors are warnings — the workflow should continue."""
+        mock_match, _ = self._gfa_patches()
+        with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+             patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
+             patch("project_creator.cli.build_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
+             patch("project_creator.cli.search_folders", return_value=[mock_match]), \
+             patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
+             patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
+             patch("project_creator.cli.get_folder_url", return_value="http://x"), \
+             patch("project_creator.cli.fill_gfa_form"), \
+             patch("project_creator.cli.wait_for_gfa_email", return_value="https://docs.google.com/spreadsheets/d/GFA123/edit"), \
+             patch("project_creator.cli.rename_file"), \
+             patch("project_creator.cli.create_shortcut"), \
+             patch("project_creator.cli.add_commenter_permission", side_effect=Exception("Permission error")), \
+             patch("project_creator.cli.write_cell"), \
+             patch("project_creator.cli.customize_gfa"):
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr"],
+                input="y\n",
+            )
+
+        assert "⚠" in result.output or "Could not update access permissions" in result.output
         assert result.exit_code == 0
 
     def test_gfa_skipped_when_user_leaves_url_blank(self, runner):

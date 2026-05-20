@@ -34,6 +34,7 @@ from .drive import (
     search_folders,
     write_cell,
     find_file_by_name,
+    add_commenter_permission,
 )
 from .gmail import build_gmail_service, wait_for_gfa_email
 from .gfa_form import fill_gfa_form
@@ -484,6 +485,19 @@ def _handle_gfa(
         )
     except Exception as exc:
         console.print(f"[red]✗[/red]  Failed to create GFA shortcut: {exc}")
+
+    # Share GFA file with domain (Red Hat)
+    try:
+        domain = config.get("gfa", {}).get("domain", "redhat.com")
+        add_commenter_permission(service, gfa_file_id, domain)
+        console.print(
+            f"[green]✔[/green]  Permissions: commenter access granted to anyone in [bold]{domain}[/bold] with the link"
+        )
+    except Exception as exc:
+        console.print(
+            f"[yellow]⚠[/yellow]  Could not update access permissions on GFA file (continuing anyway): {exc}"
+        )
+
 
     # Write GFA URL to '2. SoW'!C1 in the Purchase Summary & SOW sheet
     if sow_file_id:

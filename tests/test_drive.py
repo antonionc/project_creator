@@ -25,6 +25,7 @@ from project_creator.drive import (
     _FOLDER_MIME,
     _SHORTCUT_MIME,
     find_file_by_name,
+    add_commenter_permission,
 )
 
 
@@ -394,6 +395,28 @@ class TestCreateShortcut:
         service.files().create().execute.side_effect = _http_error(403)
         with pytest.raises(HttpError):
             create_shortcut(service, "T", "N", "P")
+
+
+# ---------------------------------------------------------------------------
+# add_commenter_permission
+# ---------------------------------------------------------------------------
+
+class TestAddCommenterPermission:
+    def test_calls_permissions_create_with_correct_args(self):
+        service = _mock_service()
+        add_commenter_permission(service, "FILE_ID", "redhat.com")
+        call_kwargs = service.permissions().create.call_args[1]
+        assert call_kwargs["fileId"] == "FILE_ID"
+        assert call_kwargs["body"]["type"] == "domain"
+        assert call_kwargs["body"]["role"] == "commenter"
+        assert call_kwargs["body"]["domain"] == "redhat.com"
+        assert call_kwargs["supportsAllDrives"] is True
+
+    def test_http_error_propagates(self):
+        service = _mock_service()
+        service.permissions().create().execute.side_effect = _http_error(403)
+        with pytest.raises(HttpError):
+            add_commenter_permission(service, "FILE_ID", "redhat.com")
 
 
 # ---------------------------------------------------------------------------
