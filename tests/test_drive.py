@@ -9,6 +9,7 @@ from googleapiclient.errors import HttpError
 
 from project_creator.drive import (
     _get_folder_path,
+    _resolve_shortcut_to_folder,
     build_proposal_folder,
     build_service,
     build_sheets_service,
@@ -181,7 +182,11 @@ class TestGetOrCreateFolder:
 
     def test_creates_folder_when_not_found(self):
         service = _mock_service()
-        service.files().list().execute.return_value = {"files": []}
+        # First call: no real folder; second call: no shortcut either
+        service.files().list().execute.side_effect = [
+            {"files": []},   # folder search
+            {"files": []},   # shortcut search
+        ]
         service.files().create().execute.return_value = {"id": "NEW_ID"}
         result = get_or_create_folder(service, "Proposals", "PARENT")
         assert result == "NEW_ID"
@@ -189,13 +194,56 @@ class TestGetOrCreateFolder:
 
     def test_create_body_contains_correct_mime(self):
         service = _mock_service()
-        service.files().list().execute.return_value = {"files": []}
+        service.files().list().execute.side_effect = [
+            {"files": []},
+            {"files": []},
+        ]
         service.files().create().execute.return_value = {"id": "X"}
         get_or_create_folder(service, "MyFolder", "PAR")
         body = service.files().create.call_args[1]["body"]
         assert body["mimeType"] == _FOLDER_MIME
         assert body["name"] == "MyFolder"
         assert body["parents"] == ["PAR"]
+
+    def test_uses_shortcut_target_when_real_folder_missing(self):
+        """If a shortcut named the same exists and points to a folder, return its target ID."""
+        service = _mock_service()
+        service.files().list().execute.side_effect = [
+            {"files": []},   # no real folder
+            {               # shortcut found
+                "files": [{
+                    "id": "SC_ID",
+                    "name": "Proposals",
+                    "shortcutDetails": {
+                        "targetId": "TARGET_FOLDER_ID",
+                        "targetMimeType": _FOLDER_MIME,
+                    },
+                }]
+            },
+        ]
+        result = get_or_create_folder(service, "Proposals", "PARENT")
+        assert result == "TARGET_FOLDER_ID"
+        service.files().create.assert_not_called()
+
+    def test_ignores_shortcut_pointing_to_non_folder(self):
+        """Shortcuts whose target is not a folder should be skipped and a new folder created."""
+        service = _mock_service()
+        service.files().list().execute.side_effect = [
+            {"files": []},   # no real folder
+            {               # shortcut pointing to a file, not a folder
+                "files": [{
+                    "id": "SC_ID",
+                    "name": "Proposals",
+                    "shortcutDetails": {
+                        "targetId": "FILE_ID",
+                        "targetMimeType": "application/vnd.google-apps.document",
+                    },
+                }]
+            },
+        ]
+        service.files().create().execute.return_value = {"id": "NEW_ID"}
+        result = get_or_create_folder(service, "Proposals", "PARENT")
+        assert result == "NEW_ID"
 
     def test_http_error_on_list_propagates(self):
         service = _mock_service()
@@ -205,17 +253,72 @@ class TestGetOrCreateFolder:
 
     def test_http_error_on_create_propagates(self):
         service = _mock_service()
-        service.files().list().execute.return_value = {"files": []}
+        service.files().list().execute.side_effect = [
+            {"files": []},
+            {"files": []},
+        ]
         service.files().create().execute.side_effect = _http_error(500)
         with pytest.raises(HttpError):
             get_or_create_folder(service, "Folder", "PAR")
 
     def test_name_with_single_quote_handled(self):
         service = _mock_service()
-        service.files().list().execute.return_value = {"files": []}
+        service.files().list().execute.side_effect = [
+            {"files": []},
+            {"files": []},
+        ]
         service.files().create().execute.return_value = {"id": "X"}
         # Should not raise even with tricky name
         get_or_create_folder(service, "O'Client", "PAR")
+
+
+# ---------------------------------------------------------------------------
+# _resolve_shortcut_to_folder
+# ---------------------------------------------------------------------------
+
+class TestResolveShortcutToFolder:
+    def test_returns_none_when_no_shortcuts(self):
+        service = _mock_service()
+        service.files().list().execute.return_value = {"files": []}
+        result = _resolve_shortcut_to_folder(service, "Proposals", "PARENT")
+        assert result is None
+
+    def test_returns_target_id_for_folder_shortcut(self):
+        service = _mock_service()
+        service.files().list().execute.return_value = {
+            "files": [{
+                "id": "SC_ID",
+                "name": "Proposals",
+                "shortcutDetails": {
+                    "targetId": "FOLDER_ID",
+                    "targetMimeType": _FOLDER_MIME,
+                },
+            }]
+        }
+        result = _resolve_shortcut_to_folder(service, "Proposals", "PARENT")
+        assert result == "FOLDER_ID"
+
+    def test_returns_none_for_non_folder_shortcut(self):
+        service = _mock_service()
+        service.files().list().execute.return_value = {
+            "files": [{
+                "id": "SC_ID",
+                "name": "Proposals",
+                "shortcutDetails": {
+                    "targetId": "DOC_ID",
+                    "targetMimeType": "application/vnd.google-apps.document",
+                },
+            }]
+        }
+        result = _resolve_shortcut_to_folder(service, "Proposals", "PARENT")
+        assert result is None
+
+    def test_query_uses_shortcut_mime(self):
+        service = _mock_service()
+        service.files().list().execute.return_value = {"files": []}
+        _resolve_shortcut_to_folder(service, "Proposals", "PARENT")
+        q = service.files().list.call_args[1]["q"]
+        assert _SHORTCUT_MIME in q
 
 
 # ---------------------------------------------------------------------------
@@ -362,8 +465,12 @@ class TestCustomizeGfa:
 class TestBuildProposalFolder:
     def test_creates_proposals_year_project_hierarchy(self):
         service = _mock_service()
-        # get_or_create_folder calls list + optionally create; mock list to return nothing
-        service.files().list().execute.return_value = {"files": []}
+        # Each get_or_create_folder makes 2 list() calls (folder + shortcut) when not found
+        service.files().list().execute.side_effect = [
+            {"files": []}, {"files": []},  # Proposals folder: not found, no shortcut
+            {"files": []}, {"files": []},  # year folder: not found, no shortcut
+            {"files": []}, {"files": []},  # project folder: not found, no shortcut
+        ]
         service.files().create().execute.side_effect = [
             {"id": "PROPOSALS_ID"},
             {"id": "YEAR_ID"},
@@ -383,7 +490,12 @@ class TestBuildProposalFolder:
             m.execute.return_value = {"id": f"ID_{len(created_bodies)}"}
             return m
 
-        service.files().list().execute.return_value = {"files": []}
+        # Each get_or_create_folder makes 2 list() calls (folder + shortcut) when not found
+        service.files().list().execute.side_effect = [
+            {"files": []}, {"files": []},  # Proposals
+            {"files": []}, {"files": []},  # year
+            {"files": []}, {"files": []},  # project
+        ]
         service.files().create.side_effect = _create_side_effect
         build_proposal_folder(service, "Acme", "Beta Project", "2026", "Jun", "ACC")
         # Third create = leaf project folder
@@ -400,11 +512,13 @@ class TestBuildProposalFolder:
             m.execute.return_value = {"id": ids[len(created_bodies) - 1]}
             return m
 
-        # First list returns existing "Proposals" folder
+        # Each get_or_create_folder makes 2 list() calls when folder is not found.
+        # When an existing real folder is found on the first list() call, the
+        # shortcut check is skipped entirely (early return).
         service.files().list().execute.side_effect = [
-            {"files": [{"id": "EXISTING_PROPOSALS", "name": "Proposals"}]},
-            {"files": []},  # year folder doesn't exist
-            {"files": []},  # project folder doesn't exist
+            {"files": [{"id": "EXISTING_PROPOSALS", "name": "Proposals"}]},  # found!
+            {"files": []}, {"files": []},  # year: not found, no shortcut
+            {"files": []}, {"files": []},  # project: not found, no shortcut
         ]
         service.files().create.side_effect = _create_side_effect
         result = build_proposal_folder(service, "Acme", "Alpha", "2026", "Apr", "ACCOUNT_ID")

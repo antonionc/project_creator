@@ -54,9 +54,23 @@ def test_extract_link_from_html_no_match():
 def test_extract_link_case_insensitive_here():
     """Link text matching is lower-cased before comparing."""
     html_body = '<a href="https://example.com/x">HERE</a>'
-    # Current implementation does .strip().lower() == "here", so uppercase matches.
     link = _extract_link_from_html(html_body)
     assert link == "https://example.com/x"
+
+
+def test_extract_link_here_with_trailing_period():
+    """Anchor text 'here.' (with trailing punctuation) should still match."""
+    html_body = '<a href="https://docs.google.com/spreadsheets/d/1abc">here.</a>'
+    link = _extract_link_from_html(html_body)
+    assert link == "https://docs.google.com/spreadsheets/d/1abc"
+
+
+def test_extract_link_fallback_regex():
+    """If HTML parser fails to find a 'here' link, it should fallback to finding a Docs URL."""
+    # Simulates plain text where there are no anchor tags, or anchor text is different
+    text_body = "Your form was processed. https://docs.google.com/spreadsheets/d/1abcxyz-_9/edit?usp=sharing"
+    link = _extract_link_from_html(text_body)
+    assert link == "https://docs.google.com/spreadsheets/d/1abcxyz-_9/edit?usp=sharing"
 
 
 # ---------------------------------------------------------------------------
@@ -109,17 +123,6 @@ def test_get_body_from_html_part():
 def test_get_body_from_multipart_alternative():
     """Recurses into a multipart/alternative sub-part to find HTML."""
     html = "<p>Nested HTML</p>"
-    # _get_body(sub_part) receives the sub-part dict directly (not wrapped in 'payload').
-    # It reads payload = sub_part.get("payload", {}) — which is {} since there's no
-    # 'payload' key — and then parts = {}.get("parts", []) == [] — falsy — so it
-    # tries payload.get("body", {}).get("data") which is also None, returning "".
-    # To make the recursion find HTML we must place it at the top level of the sub-part
-    # so that the outer message’s loop can find the text/html part after recursion returns "".
-    # The simplest correct test is to verify multipart/alternative is traversed and
-    # returns empty (current behaviour) OR to structure the message so the HTML part
-    # is a direct sibling that gets found by the outer html-part loop.
-    # Here we document the actual current behaviour: recursion returns "" because
-    # the sub-part dict is not payload-wrapped, so we fall through to text/plain.
     msg = {
         "payload": {
             "parts": [
@@ -127,15 +130,17 @@ def test_get_body_from_multipart_alternative():
                     "mimeType": "multipart/alternative",
                     "body": {},
                     "parts": [
+                        {"mimeType": "text/plain", "body": {"data": _b64("plain")}, "parts": []},
                         {"mimeType": "text/html", "body": {"data": _b64(html)}, "parts": []},
                     ],
                 }
             ]
         }
     }
-    # Recursion into the sub-part finds nothing (no 'payload' wrapper) → returns ""
+    # The recursion now correctly wraps the sub-part with {"payload": part},
+    # so _get_body can find the nested text/html part.
     result = _get_body(msg)
-    assert result == ""
+    assert result == html
 
 
 def test_get_body_falls_back_to_text_plain():

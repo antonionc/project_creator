@@ -2,6 +2,7 @@
 
 import time
 import base64
+import re
 from html.parser import HTMLParser
 from typing import Optional, Any
 
@@ -33,13 +34,23 @@ class _GFAEmailParser(HTMLParser):
             self._current_href = None
 
     def handle_data(self, data):
-        if self._in_anchor and self._current_href and data.strip().lower() == "here":
+        # Strip trailing punctuation so "here." and "here!" also match
+        if self._in_anchor and self._current_href and data.strip().lower().rstrip('.!?,;:') == "here":
             self.found_url = self._current_href
 
 def _extract_link_from_html(html_body: str) -> Optional[str]:
     parser = _GFAEmailParser()
     parser.feed(html_body)
-    return parser.found_url
+    if parser.found_url:
+        return parser.found_url
+        
+    # Fallback: regex search for Google Sheets URL if the parser fails
+    # (e.g. if the email is plain text or the anchor text isn't "here")
+    match = re.search(r'(https://docs\.google\.com/spreadsheets/d/[a-zA-Z0-9-_]+(?:/edit)?[^\s<">]*)', html_body)
+    if match:
+        return match.group(1)
+        
+    return None
 
 def _get_body(message: dict) -> str:
     """Extract HTML body from the message payload."""
@@ -59,8 +70,9 @@ def _get_body(message: dict) -> str:
             if data:
                 return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
         elif part.get("mimeType") == "multipart/alternative":
-            # Recurse into multipart
-            sub_body = _get_body(part)
+            # Recurse into multipart — wrap as a synthetic message so _get_body can find
+            # the 'payload' key it expects (sub-parts live under 'parts', not 'payload')
+            sub_body = _get_body({"payload": part})
             if sub_body:
                 return sub_body
                 
@@ -86,8 +98,9 @@ def wait_for_gfa_email(
     Returns the URL, or None on timeout.
     """
     # The actual subject will contain the account and opportunity ID
-    # Use a broad enough query to catch it reliably
-    query = f'subject:"Your GFA for {account}" after:{start_time}'
+    # Use a broad enough query to catch it reliably.
+    # Subtract 1 hour (3600s) to account for clock skew between local and Google.
+    query = f'subject:"Your GFA for {account}" after:{start_time - 3600}'
     
     start_wait = time.time()
     end_time = start_wait + timeout_s
@@ -102,6 +115,9 @@ def wait_for_gfa_email(
             total=None
         )
 
+        seen_msg_ids = set()
+        progress.console.print(f"[dim]Debug: Polling Gmail with query: '{query}'[/dim]")
+
         while time.time() < end_time:
             elapsed = int(time.time() - start_wait)
             mins, secs = divmod(elapsed, 60)
@@ -115,24 +131,47 @@ def wait_for_gfa_email(
             messages = results.get("messages", [])
 
             for msg_meta in messages:
+                msg_id = msg_meta["id"]
+                if msg_id in seen_msg_ids:
+                    continue
+                seen_msg_ids.add(msg_id)
+                
                 # Fetch full message
+                progress.console.print(f"[dim]Debug: Fetching full message {msg_id}...[/dim]")
                 msg = gmail_service.users().messages().get(
-                    userId="me", id=msg_meta["id"], format="full"
+                    userId="me", id=msg_id, format="full"
                 ).execute()
                 
                 # Double-check subject and content if needed
                 headers = msg.get("payload", {}).get("headers", [])
                 subject = next((h["value"] for h in headers if h["name"].lower() == "subject"), "")
+                progress.console.print(f"[dim]Debug: Message {msg_id} subject: '{subject}'[/dim]")
                 
-                if opportunity_id in subject:
+                if opportunity_id.lower() in subject.lower():
+                    # Manually verify internal date just in case we caught an older
+                    # email due to the -3600s clock skew buffer (allow 5 mins tolerance)
+                    internal_date_ms = int(msg.get("internalDate", "0"))
+                    limit_ms = (start_time - 300) * 1000
+                    progress.console.print(
+                        f"[dim]Debug: Subject matched! Date check - msg_date: {internal_date_ms}, limit: {limit_ms}[/dim]"
+                    )
+                    
+                    if internal_date_ms / 1000 < (start_time - 300):
+                        progress.console.print(f"[dim]Debug: Skipping message {msg_id} because it is too old.[/dim]")
+                        continue
+                    
                     # Found it! Extract link.
                     body = _get_body(msg)
                     link = _extract_link_from_html(body)
+                    progress.console.print(f"[dim]Debug: Extracted link: {link}[/dim]")
                     if link:
                         return link
                     
                     # If we found the email but no "here" link, we might want to log or warn,
                     # but we'll just keep polling in case it's a different email.
+                    progress.console.print(
+                        f"[dim]Debug: No valid 'here' link found in {msg_id}. Body length: {len(body)}[/dim]"
+                    )
 
             time.sleep(poll_interval_s)
 

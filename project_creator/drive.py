@@ -127,8 +127,44 @@ def find_file_by_name(service, name: str, parent_id: str) -> Optional[str]:
     return None
 
 
+def _resolve_shortcut_to_folder(
+    service,
+    name: str,
+    parent_id: str,
+) -> Optional[str]:
+    """Look for a shortcut named *name* inside *parent_id* that points to a folder.
+
+    Returns the target folder ID if found, or None.
+    """
+    escaped = name.replace("\\", "\\\\").replace("'", "\\'")
+    q = (
+        f"mimeType='{_SHORTCUT_MIME}' and name='{escaped}' "
+        f"and '{parent_id}' in parents and trashed=false"
+    )
+    results = service.files().list(
+        q=q,
+        fields="files(id,name,shortcutDetails)",
+        **_LIST_KWARGS,
+    ).execute()
+
+    for shortcut in results.get("files", []):
+        details = shortcut.get("shortcutDetails", {})
+        target_id = details.get("targetId")
+        target_mime = details.get("targetMimeType", "")
+        if target_id and target_mime == _FOLDER_MIME:
+            return target_id
+
+    return None
+
+
 def get_or_create_folder(service, name: str, parent_id: str) -> str:
     """Return the ID of an existing child folder named *name*, or create it.
+
+    Resolution order:
+    1. A real folder with this name already in *parent_id*.
+    2. A shortcut inside *parent_id* that is named *name* and points to a folder
+       (e.g. a shortcut created for a shared/external folder).
+    3. Create a new folder.
 
     Args:
         service:   Authenticated Drive v3 service.
@@ -154,6 +190,11 @@ def get_or_create_folder(service, name: str, parent_id: str) -> str:
     existing = results.get("files", [])
     if existing:
         return existing[0]["id"]
+
+    # Check for a shortcut that resolves to a folder.
+    shortcut_target_id = _resolve_shortcut_to_folder(service, name, parent_id)
+    if shortcut_target_id:
+        return shortcut_target_id
 
     folder = service.files().create(
         body={"name": name, "mimeType": _FOLDER_MIME, "parents": [parent_id]},
