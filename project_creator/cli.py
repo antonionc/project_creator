@@ -183,6 +183,7 @@ def setup() -> None:
 @click.option("--year", "-y", default=None, help="Year (e.g. 2026). Defaults to current year.")
 @click.option("--month", "-m", default=None, help="Month abbreviation (e.g. Apr). Defaults to current month.")
 @click.option("--skip-gfa", is_flag=True, default=False, help="Skip the GFA form step.")
+@click.option("--gfa-url", default=None, help="Use an existing GFA URL/ID instead of submitting the form.")
 def create(
     account: str | None,
     project: str | None,
@@ -190,6 +191,7 @@ def create(
     year: str | None,
     month: str | None,
     skip_gfa: bool,
+    gfa_url: str | None,
 ) -> None:
     """Create a new proposal folder in Google Drive.
 
@@ -297,7 +299,7 @@ def create(
 
     # GFA workflow
     if not skip_gfa:
-        _handle_gfa(service, sheets_service, gmail_service, config, file_base, project_folder_id, sow_file_id, project, account, opportunity_id)
+        _handle_gfa(service, sheets_service, gmail_service, config, file_base, project_folder_id, sow_file_id, project, account, opportunity_id, gfa_url)
     else:
         console.print("[dim]GFA step skipped (--skip-gfa).[/dim]")
 
@@ -403,6 +405,7 @@ def _handle_gfa(
     project: str,
     account: str,
     opportunity_id: str,
+    existing_gfa_url: Optional[str] = None,
 ) -> None:
     """Open the GFA form, wait for the email, then rename + shortcut + write cells."""
     gfa_form_url = config["templates"].get("gfa_form_url", "https://red.ht/gfa")
@@ -414,49 +417,53 @@ def _handle_gfa(
         console.print(f"[green]✔[/green]  GFA shortcut exists: [bold]{gfa_name}[/bold]")
         return
 
-    # Fill form via playwright
-    today = date.today()
-    try:
-        from dateutil.relativedelta import relativedelta
-        term_start = today.replace(day=1) + relativedelta(months=1)
-        term_end = term_start + relativedelta(years=1) - timedelta(days=1)
-    except ImportError:
-        # Fallback if dateutil is missing for some reason
-        month = today.month + 1 if today.month < 12 else 1
-        year = today.year if today.month < 12 else today.year + 1
-        term_start = date(year, month, 1)
-        term_end = date(year + 1, month, 1) - timedelta(days=1)
-
-    geo = config.get("gfa", {}).get("default_geo", "EMEA")
-    auto_submit = config.get("gfa", {}).get("submit_automatically", False)
-
-    console.print(f"\n[cyan]→[/cyan] Opening GFA form (Browser Automation)")
-    
-    start_time = int(time.time())
-
-    fill_gfa_form(
-        form_url=gfa_form_url,
-        account=account,
-        opportunity_id=opportunity_id,
-        geo=geo,
-        term_start=term_start,
-        term_end=term_end,
-        auto_submit=auto_submit,
-    )
-
-    gfa_url = wait_for_gfa_email(
-        gmail_service,
-        account=account,
-        opportunity_id=opportunity_id,
-        start_time=start_time,
-    )
-
-    if gfa_url:
-        console.print(f"\n[green]✔[/green]  Found GFA email: {gfa_url}")
-        gfa_input = gfa_url
+    if existing_gfa_url:
+        console.print(f"\n[cyan]→[/cyan] Using provided GFA URL: {existing_gfa_url}")
+        gfa_input = existing_gfa_url
     else:
-        console.print("\n[yellow]⚠[/yellow]  Email not received within timeout.")
-        gfa_input = Prompt.ask("  Paste GFA sheet URL or file ID (or Enter to skip)", default="")
+        # Fill form via playwright
+        today = date.today()
+        try:
+            from dateutil.relativedelta import relativedelta
+            term_start = today.replace(day=1) + relativedelta(months=1)
+            term_end = term_start + relativedelta(years=1) - timedelta(days=1)
+        except ImportError:
+            # Fallback if dateutil is missing for some reason
+            month = today.month + 1 if today.month < 12 else 1
+            year = today.year if today.month < 12 else today.year + 1
+            term_start = date(year, month, 1)
+            term_end = date(year + 1, month, 1) - timedelta(days=1)
+
+        geo = config.get("gfa", {}).get("default_geo", "EMEA")
+        auto_submit = config.get("gfa", {}).get("submit_automatically", False)
+
+        console.print(f"\n[cyan]→[/cyan] Opening GFA form (Browser Automation)")
+        
+        start_time = int(time.time())
+
+        fill_gfa_form(
+            form_url=gfa_form_url,
+            account=account,
+            opportunity_id=opportunity_id,
+            geo=geo,
+            term_start=term_start,
+            term_end=term_end,
+            auto_submit=auto_submit,
+        )
+
+        gfa_url_fetched = wait_for_gfa_email(
+            gmail_service,
+            account=account,
+            opportunity_id=opportunity_id,
+            start_time=start_time,
+        )
+
+        if gfa_url_fetched:
+            console.print(f"\n[green]✔[/green]  Found GFA email: {gfa_url_fetched}")
+            gfa_input = gfa_url_fetched
+        else:
+            console.print("\n[yellow]⚠[/yellow]  Email not received within timeout.")
+            gfa_input = Prompt.ask("  Paste GFA sheet URL or file ID (or Enter to skip)", default="")
 
     if not gfa_input.strip():
         console.print(

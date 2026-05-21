@@ -378,6 +378,48 @@ class TestHandleGfa:
         assert "⚠" in result.output or "Could not update access permissions" in result.output
         assert result.exit_code == 0
 
+    def test_gfa_url_provided_directly(self, runner):
+        """When --gfa-url is provided, skip browser/email steps and directly modify the GFA."""
+        mock_match, _ = self._gfa_patches()
+        with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+             patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
+             patch("project_creator.cli.build_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
+             patch("project_creator.cli.search_folders", return_value=[mock_match]), \
+             patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
+             patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
+             patch("project_creator.cli.get_folder_url", return_value="http://x"), \
+             patch("project_creator.cli.fill_gfa_form") as mock_fill, \
+             patch("project_creator.cli.wait_for_gfa_email") as mock_wait, \
+             patch("project_creator.cli.rename_file") as mock_rename, \
+             patch("project_creator.cli.create_shortcut") as mock_shortcut, \
+             patch("project_creator.cli.add_commenter_permission") as mock_perm, \
+             patch("project_creator.cli.write_cell") as mock_write, \
+             patch("project_creator.cli.customize_gfa") as mock_cust:
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr",
+                 "--gfa-url=https://docs.google.com/spreadsheets/d/EXISTING_GFA_ID/edit"],
+                input="y\n",
+            )
+
+        # Ensure browser fill and email wait are skipped
+        mock_fill.assert_not_called()
+        mock_wait.assert_not_called()
+
+        # Ensure modification steps are called with correct ID
+        mock_rename.assert_called_once_with(mock_rename.call_args[0][0], "EXISTING_GFA_ID", "Acme - Alpha (Apr 2026) - GFA")
+        mock_shortcut.assert_called_once_with(mock_shortcut.call_args[0][0], "EXISTING_GFA_ID", "Acme - Alpha (Apr 2026) - GFA", "PROJ_ID")
+        mock_perm.assert_called_once_with(mock_perm.call_args[0][0], "EXISTING_GFA_ID", "redhat.com")
+        mock_write.assert_called_once_with(mock_write.call_args[0][0], "COPY_ID", "2. SoW", "C1", "https://docs.google.com/spreadsheets/d/EXISTING_GFA_ID/edit")
+        mock_cust.assert_called_once_with(mock_cust.call_args[0][0], "EXISTING_GFA_ID", "Alpha")
+
+        assert result.exit_code == 0
+        assert "using provided gfa url" in result.output.lower()
+
     def test_gfa_skipped_when_user_leaves_url_blank(self, runner):
         mock_match, _ = self._gfa_patches()
         with patch("project_creator.cli.load_config", return_value=_valid_config()), \
