@@ -128,6 +128,13 @@ def setup() -> None:
     if sow_raw:
         config["templates"]["purchase_summary_sow"] = parse_file_id(sow_raw)
 
+    cu_raw = Prompt.ask(
+        "  CU Calculator template (ID or URL, optional)",
+        default=config["templates"].get("cu_calculator", ""),
+    )
+    if cu_raw:
+        config["templates"]["cu_calculator"] = parse_file_id(cu_raw)
+
     gfa_url = Prompt.ask(
         "  GFA form URL",
         default=config["templates"].get("gfa_form_url", "https://red.ht/gfa"),
@@ -184,6 +191,7 @@ def setup() -> None:
 @click.option("--month", "-m", default=None, help="Month abbreviation (e.g. Apr). Defaults to current month.")
 @click.option("--skip-gfa", is_flag=True, default=False, help="Skip the GFA form step.")
 @click.option("--gfa-url", default=None, help="Use an existing GFA URL/ID instead of submitting the form.")
+@click.option("--cu-calculator", is_flag=True, default=False, help="Copy the CU calculator template file.")
 def create(
     account: str | None,
     project: str | None,
@@ -192,6 +200,7 @@ def create(
     month: str | None,
     skip_gfa: bool,
     gfa_url: str | None,
+    cu_calculator: bool,
 ) -> None:
     """Create a new proposal folder in Google Drive.
 
@@ -219,6 +228,11 @@ def create(
         for err in errors:
             console.print(f"   • {err}")
         console.print("\nRun [bold]project-creator setup[/bold] to configure.")
+        raise SystemExit(1)
+
+    if cu_calculator and not config["templates"].get("cu_calculator"):
+        console.print("[red]✗  Configuration incomplete:[/red]")
+        console.print("   • templates.cu_calculator is not set — run 'project-creator setup' to configure")
         raise SystemExit(1)
 
     now = datetime.now()
@@ -296,6 +310,16 @@ def create(
         parent_id=project_folder_id,
         label="Purchase Summary & SOW",
     )
+
+    # Copy CU Calculator template
+    if cu_calculator:
+        _copy_template(
+            service,
+            file_id=config["templates"]["cu_calculator"],
+            name=f"{file_base} - CU Calculator",
+            parent_id=project_folder_id,
+            label="CU Calculator",
+        )
 
     # GFA workflow
     if not skip_gfa:

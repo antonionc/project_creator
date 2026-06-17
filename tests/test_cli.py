@@ -20,11 +20,12 @@ def runner():
     return CliRunner()
 
 
-def _valid_config(proposal="PROP_ID", sow="SOW_ID"):
+def _valid_config(proposal="PROP_ID", sow="SOW_ID", cu_calculator="CU_ID"):
     return {
         "templates": {
             "proposal": proposal,
             "purchase_summary_sow": sow,
+            "cu_calculator": cu_calculator,
             "gfa_form_url": "https://red.ht/gfa",
         },
         "search_root_id": "",
@@ -80,11 +81,13 @@ class TestSetupCommand:
             result = runner.invoke(
                 main,
                 ["setup"],
-                # proposal, sow, gfa_url, search root, default_geo, auto_submit
-                input="PROP\nSOW\nhttps://red.ht/gfa\n\n\n\n",
+                # proposal, sow, cu_calculator, gfa_url, search root, default_geo, auto_submit
+                input="PROP\nSOW\nCU_CALC\nhttps://red.ht/gfa\n\n\n\n",
             )
 
         assert mock_save.called
+        saved_config = mock_save.call_args[0][0]
+        assert saved_config["templates"]["cu_calculator"] == "CU_CALC"
 
     def test_exits_1_when_auth_fails(self, runner, tmp_path):
         config_dir = tmp_path / ".config" / "project_creator"
@@ -211,6 +214,51 @@ class TestCreateCommandHappyPath:
 
         if mock_bpf.called:
             assert mock_bpf.call_args[0][4] == "Apr"  # capitalized month
+
+    def test_create_fails_when_cu_calculator_requested_but_not_configured(self, runner):
+        mock_creds, mock_service, mock_sheets, mock_gmail, mock_match = self._base_patches()
+        bad_config = _valid_config(cu_calculator="") # empty CU calculator template
+
+        with patch("project_creator.cli.load_config", return_value=bad_config), \
+             patch("project_creator.cli.get_credentials", return_value=mock_creds), \
+             patch("project_creator.cli.build_service", return_value=mock_service), \
+             patch("project_creator.cli.build_sheets_service", return_value=mock_sheets), \
+             patch("project_creator.cli.build_gmail_service", return_value=mock_gmail):
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa", "--cu-calculator"],
+            )
+
+        assert result.exit_code == 1
+        assert "templates.cu_calculator is not set" in result.output
+
+    def test_create_copies_cu_calculator_when_flag_and_configured(self, runner):
+        mock_creds, mock_service, mock_sheets, mock_gmail, mock_match = self._base_patches()
+
+        with patch("project_creator.cli.load_config", return_value=_valid_config(cu_calculator="MY_CU_TEMPLATE_ID")), \
+             patch("project_creator.cli.get_credentials", return_value=mock_creds), \
+             patch("project_creator.cli.build_service", return_value=mock_service), \
+             patch("project_creator.cli.build_sheets_service", return_value=mock_sheets), \
+             patch("project_creator.cli.build_gmail_service", return_value=mock_gmail), \
+             patch("project_creator.cli.search_folders", return_value=[mock_match]), \
+             patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
+             patch("project_creator.cli.copy_file", return_value="COPY_ID") as mock_copy, \
+             patch("project_creator.cli.get_folder_url", return_value="https://drive.google.com/xyz"):
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa", "--cu-calculator"],
+                input="y\n",  # confirm account folder
+            )
+
+        assert result.exit_code == 0
+        assert "All done" in result.output
+        # Verify copy_file was called for proposal, SOW, and CU calculator templates
+        assert mock_copy.call_count == 3
+        # The third call should be for the CU calculator template
+        mock_copy.assert_any_call(mock_service, "MY_CU_TEMPLATE_ID", "Acme - Alpha (Apr 2026) - CU Calculator", "PROJ_ID")
 
 
 # ---------------------------------------------------------------------------

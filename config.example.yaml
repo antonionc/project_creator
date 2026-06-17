@@ -7,6 +7,7 @@
 templates:
   proposal: "GOOGLE_DRIVE_FILE_ID_HERE"              # Google Slides — Proposal template
   purchase_summary_sow: "GOOGLE_DRIVE_FILE_ID_HERE"  # Google Sheets — Purchase Summary & SOW
+  cu_calculator: "GOOGLE_DRIVE_FILE_ID_HERE"         # Google Sheets — CU Calculator template
   # The GFA is generated via a Google Form, not a template file.
   gfa_form_url: "https://red.ht/gfa"
 

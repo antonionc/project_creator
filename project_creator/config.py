@@ -14,6 +14,7 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "templates": {
         "proposal": "",
         "purchase_summary_sow": "",
+        "cu_calculator": "",
         "gfa_form_url": "https://red.ht/gfa",
     },
     "search_root_id": "",

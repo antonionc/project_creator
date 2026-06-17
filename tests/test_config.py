@@ -96,6 +96,7 @@ class TestLoadConfig:
         assert config["templates"]["proposal"] == "PROP_ID"
         # Missing keys are merged from defaults
         assert config["templates"]["purchase_summary_sow"] == ""
+        assert config["templates"]["cu_calculator"] == ""
 
     def test_handles_empty_yaml_file(self, tmp_config):
         _, config_path = tmp_config
