@@ -44,7 +44,7 @@ You need a Google Cloud project with the Drive API enabled and an OAuth 2.0 clie
 3. If prompted, configure the **OAuth consent screen** first:
    - **User Type**: Internal (recommended if your Red Hat account is Google Workspace) or External
    - Fill in app name and your email, then click **Save**
-   - Add the scope `https://www.googleapis.com/auth/drive`
+   - Add the scopes `https://www.googleapis.com/auth/drive` and `https://www.googleapis.com/auth/gmail.readonly`
    - If External: add your email as a **test user**
 4. Back in Credentials → Create OAuth client ID:
    - **Application type**: Desktop app
@@ -159,7 +159,7 @@ $ project-creator create
 ## Security
 
 - `credentials.json` and `token.json` are stored only in `~/.config/project_creator/` and are listed in `.gitignore` — **never commit them**
-- The OAuth scope used is `https://www.googleapis.com/auth/drive` (full Drive access required to create folders, copy files, and create shortcuts across Shared Drives)
+- The OAuth scopes used are `https://www.googleapis.com/auth/drive` (full Drive access required to create folders, copy files, and create shortcuts across Shared Drives) and `https://www.googleapis.com/auth/gmail.readonly` (read-only Gmail access required to poll your inbox and automatically retrieve the GFA form response email)
 - Tokens are refreshed automatically; re-authorization is only needed if you revoke access in your Google account settings
 
 ---
