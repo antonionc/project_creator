@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, call, patch
 
 import pytest
+import yaml
 from googleapiclient.errors import HttpError
 
 from project_creator.drive import (
@@ -15,7 +16,6 @@ from project_creator.drive import (
     build_sheets_service,
     copy_file,
     create_shortcut,
-    customize_gfa,
     get_folder_url,
     get_or_create_folder,
     parse_file_id,
@@ -26,6 +26,12 @@ from project_creator.drive import (
     _SHORTCUT_MIME,
     find_file_by_name,
     add_commenter_permission,
+)
+from project_creator.modifications import (
+    format_value,
+    apply_modifications,
+    get_modifications_dir,
+    ensure_default_modifications,
 )
 
 
@@ -446,39 +452,131 @@ class TestWriteCell:
 
 
 # ---------------------------------------------------------------------------
-# customize_gfa
+# format_value / apply_modifications
 # ---------------------------------------------------------------------------
 
-class TestCustomizeGfa:
-    def test_calls_batch_update(self):
-        sheets = _mock_service()
-        customize_gfa(sheets, "GFA_ID", "My Project")
-        sheets.spreadsheets().values().batchUpdate.assert_called_once()
+class TestFormatValue:
+    def test_replaces_exact_variable_keeping_type(self):
+        variables = {"is_bool": True, "count": 42}
+        assert format_value("{is_bool}", variables) is True
+        assert format_value("{count}", variables) == 42
+        assert format_value("Not found {missing}", variables) == "Not found {missing}"
 
-    def test_batch_update_contains_project_name(self):
-        sheets = _mock_service()
-        customize_gfa(sheets, "GFA_ID", "Alpha Project")
-        body = sheets.spreadsheets().values().batchUpdate.call_args[1]["body"]
-        data_values = [item["values"] for item in body["data"]]
-        assert [["Alpha Project"]] in data_values
+    def test_replaces_substring(self):
+        variables = {"project": "Alpha", "year": "2026"}
+        assert format_value("Project {project} ({year})", variables) == "Project Alpha (2026)"
 
-    def test_uses_user_entered_value_input_option(self):
-        sheets = _mock_service()
-        customize_gfa(sheets, "GFA_ID", "Proj")
-        body = sheets.spreadsheets().values().batchUpdate.call_args[1]["body"]
-        assert body["valueInputOption"] == "USER_ENTERED"
+    def test_recursive_list_and_dict(self):
+        variables = {"var": "value"}
+        data = {
+            "key": "{var}",
+            "list": ["{var}", "plain", {"nested": "{var}"}]
+        }
+        formatted = format_value(data, variables)
+        assert formatted["key"] == "value"
+        assert formatted["list"] == ["value", "plain", {"nested": "value"}]
 
-    def test_writes_four_cells(self):
-        sheets = _mock_service()
-        customize_gfa(sheets, "GFA_ID", "Proj")
-        body = sheets.spreadsheets().values().batchUpdate.call_args[1]["body"]
-        assert len(body["data"]) == 4
 
-    def test_http_error_propagates(self):
-        sheets = _mock_service()
-        sheets.spreadsheets().values().batchUpdate().execute.side_effect = _http_error(403)
-        with pytest.raises(HttpError):
-            customize_gfa(sheets, "GFA_ID", "Proj")
+class TestApplyModifications:
+    @patch("project_creator.modifications.get_modifications_dir")
+    def test_apply_modifications_sheets(self, mock_get_dir, tmp_path):
+        mock_get_dir.return_value = tmp_path
+        
+        # Write dummy YAML
+        yaml_content = {
+            "modifications": [
+                {"range": "'Sheet1'!A1", "value": "{var}"}
+            ]
+        }
+        with open(tmp_path / "test_sheet.yaml", "w") as f:
+            yaml.dump(yaml_content, f)
+
+        mock_creds = MagicMock()
+        mock_drive = MagicMock()
+        mock_sheets = MagicMock()
+
+        # Mock build_service for drive
+        mock_drive.files().get().execute.return_value = {
+            "mimeType": "application/vnd.google-apps.spreadsheet"
+        }
+
+        with patch("project_creator.modifications.build_service", return_value=mock_drive), \
+             patch("project_creator.modifications.build_sheets_service", return_value=mock_sheets):
+            apply_modifications(
+                creds=mock_creds,
+                file_id="FILE123",
+                file_key="test_sheet",
+                variables={"var": "hello"},
+                config={}
+            )
+
+        # Should retrieve mimeType
+        mock_drive.files().get.assert_called_with(
+            fileId="FILE123",
+            fields="mimeType",
+            supportsAllDrives=True
+        )
+
+        # Should update Sheets values
+        mock_sheets.spreadsheets().values().batchUpdate.assert_called_once()
+        call_kwargs = mock_sheets.spreadsheets().values().batchUpdate.call_args[1]
+        assert call_kwargs["spreadsheetId"] == "FILE123"
+        assert call_kwargs["body"]["valueInputOption"] == "USER_ENTERED"
+        assert call_kwargs["body"]["data"] == [
+            {"range": "'Sheet1'!A1", "values": [["hello"]]}
+        ]
+
+    @patch("project_creator.modifications.get_modifications_dir")
+    @patch("googleapiclient.discovery.build")
+    def test_apply_modifications_slides(self, mock_build, mock_get_dir, tmp_path):
+        mock_get_dir.return_value = tmp_path
+        
+        # Write dummy YAML
+        yaml_content = {
+            "modifications": [
+                {"find": "{{project}}", "replace": "{var}"}
+            ]
+        }
+        with open(tmp_path / "test_slide.yaml", "w") as f:
+            yaml.dump(yaml_content, f)
+
+        mock_creds = MagicMock()
+        mock_drive = MagicMock()
+        mock_slides = MagicMock()
+        mock_build.return_value = mock_slides
+
+        # Mock build_service for drive
+        mock_drive.files().get().execute.return_value = {
+            "mimeType": "application/vnd.google-apps.presentation"
+        }
+
+        with patch("project_creator.modifications.build_service", return_value=mock_drive):
+            apply_modifications(
+                creds=mock_creds,
+                file_id="FILE456",
+                file_key="test_slide",
+                variables={"var": "Red Hat Project"},
+                config={}
+            )
+
+        # Should update Slides
+        mock_build.assert_called_once_with("slides", "v1", credentials=mock_creds)
+        mock_slides.presentations().batchUpdate.assert_called_once_with(
+            presentationId="FILE456",
+            body={
+                "requests": [
+                    {
+                        "replaceAllText": {
+                            "containsText": {
+                                "text": "{{project}}",
+                                "matchCase": True,
+                            },
+                            "replaceText": "Red Hat Project",
+                        }
+                    }
+                ]
+            }
+        )
 
 
 # ---------------------------------------------------------------------------

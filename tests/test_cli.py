@@ -378,8 +378,7 @@ class TestHandleGfa:
              patch("project_creator.cli.rename_file"), \
              patch("project_creator.cli.create_shortcut"), \
              patch("project_creator.cli.add_commenter_permission") as mock_perm, \
-             patch("project_creator.cli.write_cell"), \
-             patch("project_creator.cli.customize_gfa"):
+             patch("project_creator.cli.apply_modifications"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
@@ -414,8 +413,7 @@ class TestHandleGfa:
              patch("project_creator.cli.rename_file"), \
              patch("project_creator.cli.create_shortcut"), \
              patch("project_creator.cli.add_commenter_permission", side_effect=Exception("Permission error")), \
-             patch("project_creator.cli.write_cell"), \
-             patch("project_creator.cli.customize_gfa"):
+             patch("project_creator.cli.apply_modifications"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
@@ -444,8 +442,7 @@ class TestHandleGfa:
              patch("project_creator.cli.rename_file") as mock_rename, \
              patch("project_creator.cli.create_shortcut") as mock_shortcut, \
              patch("project_creator.cli.add_commenter_permission") as mock_perm, \
-             patch("project_creator.cli.write_cell") as mock_write, \
-             patch("project_creator.cli.customize_gfa") as mock_cust:
+             patch("project_creator.cli.apply_modifications") as mock_mod:
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
@@ -462,8 +459,32 @@ class TestHandleGfa:
         mock_rename.assert_called_once_with(mock_rename.call_args[0][0], "EXISTING_GFA_ID", "Acme - Alpha (Apr 2026) - GFA")
         mock_shortcut.assert_called_once_with(mock_shortcut.call_args[0][0], "EXISTING_GFA_ID", "Acme - Alpha (Apr 2026) - GFA", "PROJ_ID")
         mock_perm.assert_called_once_with(mock_perm.call_args[0][0], "EXISTING_GFA_ID", "redhat.com")
-        mock_write.assert_called_once_with(mock_write.call_args[0][0], "COPY_ID", "2. SoW", "C1", "https://docs.google.com/spreadsheets/d/EXISTING_GFA_ID/edit")
-        mock_cust.assert_called_once_with(mock_cust.call_args[0][0], "EXISTING_GFA_ID", "Alpha")
+
+        # Ensure apply_modifications was called for proposal, SOW, and GFA
+        from unittest.mock import call
+        mock_mod.assert_has_calls([
+            call(
+                mock_mod.call_args_list[0][0][0],
+                "COPY_ID",
+                "proposal",
+                mock_mod.call_args_list[0][0][3],
+                mock_mod.call_args_list[0][0][4]
+            ),
+            call(
+                mock_mod.call_args_list[1][0][0],
+                "COPY_ID",
+                "purchase_summary_sow",
+                mock_mod.call_args_list[1][0][3],
+                mock_mod.call_args_list[1][0][4]
+            ),
+            call(
+                mock_mod.call_args_list[2][0][0],
+                "EXISTING_GFA_ID",
+                "gfa",
+                mock_mod.call_args_list[2][0][3],
+                mock_mod.call_args_list[2][0][4]
+            )
+        ], any_order=True)
 
         assert result.exit_code == 0
         assert "using provided gfa url" in result.output.lower()
@@ -517,8 +538,7 @@ class TestHandleGfa:
                    return_value="https://docs.google.com/spreadsheets/d/GFA123/edit"), \
              patch("project_creator.cli.rename_file", side_effect=_bad_rename), \
              patch("project_creator.cli.create_shortcut"), \
-             patch("project_creator.cli.write_cell"), \
-             patch("project_creator.cli.customize_gfa"):
+             patch("project_creator.cli.apply_modifications"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
