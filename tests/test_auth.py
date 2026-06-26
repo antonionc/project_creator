@@ -1,5 +1,7 @@
 """Tests for project_creator.auth."""
 
+# Assisted-by: Cursor
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -81,6 +83,22 @@ class TestGetCredentialsValidToken:
             get_credentials()
 
         mock_creds.refresh.assert_not_called()
+
+    def test_credentials_file_has_restricted_permissions(self, tmp_auth):
+        import stat
+        config_dir, creds_path, token_path = tmp_auth
+        _write_file(creds_path)
+        _write_file(token_path, '{"token": "tok"}')
+        creds_path.chmod(0o644)
+
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+
+        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds):
+            get_credentials()
+
+        assert stat.S_IMODE(config_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(creds_path.stat().st_mode) == 0o600
 
 
 # ---------------------------------------------------------------------------

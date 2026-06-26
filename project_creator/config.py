@@ -18,6 +18,7 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "gfa_form_url": "https://red.ht/gfa",
     },
     "search_root_id": "",
+    "modifications_dir": "",
 }
 
 

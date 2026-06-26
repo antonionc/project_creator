@@ -1,7 +1,10 @@
 """Tests for project_creator.cli (Click commands)."""
 
+# Assisted-by: Cursor
+
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +21,18 @@ from project_creator.cli import main, _MONTH_ABBREVS
 @pytest.fixture()
 def runner():
     return CliRunner()
+
+
+@contextmanager
+def patch_config_dirs(config_dir: Path):
+    """Patch config paths in both cli and auth so permission helpers stay in sync."""
+    creds_path = config_dir / "credentials.json"
+    token_path = config_dir / "token.json"
+    with patch("project_creator.cli.CONFIG_DIR", config_dir), \
+         patch("project_creator.auth.CONFIG_DIR", config_dir), \
+         patch("project_creator.auth._CREDS_PATH", creds_path), \
+         patch("project_creator.auth._TOKEN_PATH", token_path):
+        yield creds_path, token_path
 
 
 def _valid_config(proposal="PROP_ID", sow="SOW_ID", cu_calculator="CU_ID"):
@@ -54,7 +69,7 @@ class TestCliGroup:
 class TestSetupCommand:
     def test_exits_1_when_no_credentials_json(self, runner, tmp_path):
         config_dir = tmp_path / ".config" / "project_creator"
-        with patch("project_creator.cli.CONFIG_DIR", config_dir), \
+        with patch_config_dirs(config_dir), \
              patch("project_creator.cli.load_config", return_value=_valid_config()):
             result = runner.invoke(main, ["setup"])
         assert result.exit_code == 1
@@ -62,28 +77,27 @@ class TestSetupCommand:
 
     def test_saves_config_on_success(self, runner, tmp_path):
         config_dir = tmp_path / ".config" / "project_creator"
-        creds_path = config_dir / "credentials.json"
-        creds_path.parent.mkdir(parents=True)
-        creds_path.write_text("{}")
+        with patch_config_dirs(config_dir) as (creds_path, _):
+            creds_path.parent.mkdir(parents=True, exist_ok=True)
+            creds_path.write_text("{}")
 
-        mock_creds = MagicMock()
-        mock_service = MagicMock()
-        mock_service.about().get().execute.return_value = {
-            "user": {"emailAddress": "test@example.com"}
-        }
+            mock_creds = MagicMock()
+            mock_service = MagicMock()
+            mock_service.about().get().execute.return_value = {
+                "user": {"emailAddress": "test@example.com"}
+            }
 
-        with patch("project_creator.cli.CONFIG_DIR", config_dir), \
-             patch("project_creator.cli.load_config", return_value=_valid_config()), \
-             patch("project_creator.cli.save_config") as mock_save, \
-             patch("project_creator.cli.get_credentials", return_value=mock_creds), \
-             patch("project_creator.cli.build_service", return_value=mock_service), \
-             patch("project_creator.cli.parse_file_id", side_effect=lambda x: x):
-            result = runner.invoke(
-                main,
-                ["setup"],
-                # proposal, sow, cu_calculator, gfa_url, search root, default_geo, auto_submit
-                input="PROP\nSOW\nCU_CALC\nhttps://red.ht/gfa\n\n\n\n",
-            )
+            with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+                 patch("project_creator.cli.save_config") as mock_save, \
+                 patch("project_creator.cli.get_credentials", return_value=mock_creds), \
+                 patch("project_creator.cli.build_service", return_value=mock_service), \
+                 patch("project_creator.cli.parse_file_id", side_effect=lambda x: x):
+                result = runner.invoke(
+                    main,
+                    ["setup"],
+                    # proposal, sow, cu_calculator, gfa_url, search root, default_geo, auto_submit
+                    input="PROP\nSOW\nCU_CALC\nhttps://red.ht/gfa\n\n\n\n",
+                )
 
         assert mock_save.called
         saved_config = mock_save.call_args[0][0]
@@ -91,14 +105,13 @@ class TestSetupCommand:
 
     def test_exits_1_when_auth_fails(self, runner, tmp_path):
         config_dir = tmp_path / ".config" / "project_creator"
-        creds_path = config_dir / "credentials.json"
-        creds_path.parent.mkdir(parents=True)
-        creds_path.write_text("{}")
+        with patch_config_dirs(config_dir) as (creds_path, _):
+            creds_path.parent.mkdir(parents=True, exist_ok=True)
+            creds_path.write_text("{}")
 
-        with patch("project_creator.cli.CONFIG_DIR", config_dir), \
-             patch("project_creator.cli.load_config", return_value=_valid_config()), \
-             patch("project_creator.cli.get_credentials", side_effect=Exception("auth error")):
-            result = runner.invoke(main, ["setup"], input="\n\n\n\n")
+            with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+                 patch("project_creator.cli.get_credentials", side_effect=Exception("auth error")):
+                result = runner.invoke(main, ["setup"], input="\n\n\n\n")
 
         assert result.exit_code == 1
         assert "Authorization failed" in result.output or "auth error" in result.output
@@ -378,8 +391,7 @@ class TestHandleGfa:
              patch("project_creator.cli.rename_file"), \
              patch("project_creator.cli.create_shortcut"), \
              patch("project_creator.cli.add_commenter_permission") as mock_perm, \
-             patch("project_creator.cli.write_cell"), \
-             patch("project_creator.cli.customize_gfa"):
+             patch("project_creator.cli.apply_modifications"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
@@ -414,8 +426,7 @@ class TestHandleGfa:
              patch("project_creator.cli.rename_file"), \
              patch("project_creator.cli.create_shortcut"), \
              patch("project_creator.cli.add_commenter_permission", side_effect=Exception("Permission error")), \
-             patch("project_creator.cli.write_cell"), \
-             patch("project_creator.cli.customize_gfa"):
+             patch("project_creator.cli.apply_modifications"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
@@ -444,8 +455,7 @@ class TestHandleGfa:
              patch("project_creator.cli.rename_file") as mock_rename, \
              patch("project_creator.cli.create_shortcut") as mock_shortcut, \
              patch("project_creator.cli.add_commenter_permission") as mock_perm, \
-             patch("project_creator.cli.write_cell") as mock_write, \
-             patch("project_creator.cli.customize_gfa") as mock_cust:
+             patch("project_creator.cli.apply_modifications") as mock_mod:
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",
@@ -462,8 +472,32 @@ class TestHandleGfa:
         mock_rename.assert_called_once_with(mock_rename.call_args[0][0], "EXISTING_GFA_ID", "Acme - Alpha (Apr 2026) - GFA")
         mock_shortcut.assert_called_once_with(mock_shortcut.call_args[0][0], "EXISTING_GFA_ID", "Acme - Alpha (Apr 2026) - GFA", "PROJ_ID")
         mock_perm.assert_called_once_with(mock_perm.call_args[0][0], "EXISTING_GFA_ID", "redhat.com")
-        mock_write.assert_called_once_with(mock_write.call_args[0][0], "COPY_ID", "2. SoW", "C1", "https://docs.google.com/spreadsheets/d/EXISTING_GFA_ID/edit")
-        mock_cust.assert_called_once_with(mock_cust.call_args[0][0], "EXISTING_GFA_ID", "Alpha")
+
+        # Ensure apply_modifications was called for proposal, SOW, and GFA
+        from unittest.mock import call
+        mock_mod.assert_has_calls([
+            call(
+                mock_mod.call_args_list[0][0][0],
+                "COPY_ID",
+                "proposal",
+                mock_mod.call_args_list[0][0][3],
+                mock_mod.call_args_list[0][0][4]
+            ),
+            call(
+                mock_mod.call_args_list[1][0][0],
+                "COPY_ID",
+                "purchase_summary_sow",
+                mock_mod.call_args_list[1][0][3],
+                mock_mod.call_args_list[1][0][4]
+            ),
+            call(
+                mock_mod.call_args_list[2][0][0],
+                "EXISTING_GFA_ID",
+                "gfa",
+                mock_mod.call_args_list[2][0][3],
+                mock_mod.call_args_list[2][0][4]
+            )
+        ], any_order=True)
 
         assert result.exit_code == 0
         assert "using provided gfa url" in result.output.lower()
@@ -517,8 +551,7 @@ class TestHandleGfa:
                    return_value="https://docs.google.com/spreadsheets/d/GFA123/edit"), \
              patch("project_creator.cli.rename_file", side_effect=_bad_rename), \
              patch("project_creator.cli.create_shortcut"), \
-             patch("project_creator.cli.write_cell"), \
-             patch("project_creator.cli.customize_gfa"):
+             patch("project_creator.cli.apply_modifications"):
             result = runner.invoke(
                 main,
                 ["create", "--account=Acme", "--project=Alpha",

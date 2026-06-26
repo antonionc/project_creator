@@ -1,5 +1,7 @@
 """Click-based CLI for the Red Hat Proposal Creator."""
 
+# Assisted-by: Cursor
+
 from __future__ import annotations  # enables X | Y union syntax on Python 3.9
 
 import webbrowser
@@ -13,7 +15,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from .auth import get_credentials, CONFIG_DIR
+from .auth import ensure_config_permissions, get_credentials, CONFIG_DIR
 from .config import (
     CONFIG_PATH,
     load_config,
@@ -26,7 +28,6 @@ from .drive import (
     build_sheets_service,
     copy_file,
     create_shortcut,
-    customize_gfa,
     get_folder_url,
     get_or_create_folder,
     parse_file_id,
@@ -36,6 +37,7 @@ from .drive import (
     find_file_by_name,
     add_commenter_permission,
 )
+from .modifications import apply_modifications
 from .gmail import build_gmail_service, wait_for_gfa_email
 from .gfa_form import fill_gfa_form
 import time
@@ -77,8 +79,7 @@ def setup() -> None:
         )
     )
 
-    # Ensure config dir exists
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_config_permissions()
     config = load_config()
 
     # ── 1. Check credentials.json ──────────────────────────────────────────
@@ -93,6 +94,7 @@ def setup() -> None:
         raise SystemExit(1)
 
     console.print("\n[green]✔[/green]  credentials.json found.")
+    ensure_config_permissions()
 
     # ── 2. Authorize with Google ───────────────────────────────────────────
     console.print("\n[bold]Authorizing with Google...[/bold]")
@@ -293,14 +295,30 @@ def create(
     # ── File base name (used for all three files) ──────────────────────────
     file_base = f"{account} - {project} ({month} {year})"
 
+    variables = {
+        "account": account,
+        "project": project,
+        "opportunity_id": opportunity_id,
+        "year": year,
+        "month": month,
+        "file_base": file_base,
+        "gfa_url": "",
+    }
+
     # ── Copy Proposal template ─────────────────────────────────────────────
-    _copy_template(
+    proposal_file_id = _copy_template(
         service,
         file_id=config["templates"]["proposal"],
         name=f"{file_base} - Proposal",
         parent_id=project_folder_id,
         label="Proposal",
     )
+    if proposal_file_id:
+        console.print("[cyan]→[/cyan]  Applying modifications to Proposal...")
+        try:
+            apply_modifications(creds, proposal_file_id, "proposal", variables, config)
+        except Exception as exc:
+            console.print(f"[yellow]⚠[/yellow]  Could not modify Proposal: {exc}")
 
     # Copy Purchase Summary & SOW template
     sow_file_id = _copy_template(
@@ -313,19 +331,45 @@ def create(
 
     # Copy CU Calculator template
     if cu_calculator:
-        _copy_template(
+        cu_file_id = _copy_template(
             service,
             file_id=config["templates"]["cu_calculator"],
             name=f"{file_base} - CU Calculator",
             parent_id=project_folder_id,
             label="CU Calculator",
         )
+        if cu_file_id:
+            console.print("[cyan]→[/cyan]  Applying modifications to CU Calculator...")
+            try:
+                apply_modifications(creds, cu_file_id, "cu_calculator", variables, config)
+            except Exception as exc:
+                console.print(f"[yellow]⚠[/yellow]  Could not modify CU Calculator: {exc}")
 
     # GFA workflow
     if not skip_gfa:
-        _handle_gfa(service, sheets_service, gmail_service, config, file_base, project_folder_id, sow_file_id, project, account, opportunity_id, gfa_url)
+        _handle_gfa(
+            creds,
+            service,
+            sheets_service,
+            gmail_service,
+            config,
+            file_base,
+            project_folder_id,
+            sow_file_id,
+            project,
+            account,
+            opportunity_id,
+            variables,
+            gfa_url,
+        )
     else:
         console.print("[dim]GFA step skipped (--skip-gfa).[/dim]")
+        if sow_file_id:
+            console.print("[cyan]→[/cyan]  Applying modifications to Purchase Summary & SOW...")
+            try:
+                apply_modifications(creds, sow_file_id, "purchase_summary_sow", variables, config)
+            except Exception as exc:
+                console.print(f"[yellow]⚠[/yellow]  Could not modify Purchase Summary & SOW: {exc}")
 
     # ── Done ───────────────────────────────────────────────────────────────
     folder_url = get_folder_url(project_folder_id)
@@ -419,6 +463,7 @@ def _copy_template(
 
 
 def _handle_gfa(
+    creds,
     service,
     sheets_service,
     gmail_service,
@@ -429,6 +474,7 @@ def _handle_gfa(
     project: str,
     account: str,
     opportunity_id: str,
+    variables: dict[str, Any],
     existing_gfa_url: Optional[str] = None,
 ) -> None:
     """Open the GFA form, wait for the email, then rename + shortcut + write cells."""
@@ -530,28 +576,27 @@ def _handle_gfa(
         )
 
 
-    # Write GFA URL to '2. SoW'!C1 in the Purchase Summary & SOW sheet
+    variables["gfa_url"] = gfa_url
+
+    # Write GFA URL in the Purchase Summary & SOW sheet
     if sow_file_id:
+        console.print("[cyan]→[/cyan]  Applying modifications to Purchase Summary & SOW...")
         try:
-            write_cell(sheets_service, sow_file_id, "2. SoW", "C1", gfa_url)
+            apply_modifications(creds, sow_file_id, "purchase_summary_sow", variables, config)
             console.print(
-                f"[green]✔[/green]  Wrote GFA URL to [bold]'2. SoW'!C1[/bold] in Purchase Summary & SOW"
+                "[green]✔[/green]  Purchase Summary & SOW customized."
             )
         except Exception as exc:
             console.print(
-                f"[yellow]⚠[/yellow]  Could not write GFA URL to SOW sheet: {exc}"
+                f"[yellow]⚠[/yellow]  Could not customize Purchase Summary & SOW sheet: {exc}"
             )
 
-    # Customize the GFA sheet ('New P&L Summary' tab)
+    # Customize the GFA sheet
     console.print("[cyan]→[/cyan]  Customizing GFA sheet...")
     try:
-        customize_gfa(sheets_service, gfa_file_id, project)
+        apply_modifications(creds, gfa_file_id, "gfa", variables, config)
         console.print(
-            "[green]✔[/green]  GFA customized:\n"
-            "   • [bold]'New P&L Summary'!C12[/bold] ← project name\n"
-            "   • [bold]'New P&L Summary'!E6[/bold]  ← New SOW\n"
-            "   • [bold]'New P&L Summary'!A16[/bold] ← TRUE\n"
-            "   • [bold]'New P&L Summary'!C9[/bold]  ← Iberia"
+            "[green]✔[/green]  GFA customized."
         )
     except Exception as exc:
         console.print(f"[yellow]⚠[/yellow]  Could not customize GFA sheet: {exc}")
