@@ -1,5 +1,7 @@
 """OAuth2 authentication for Google Drive API."""
 
+# Assisted-by: Cursor
+
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +20,16 @@ _CREDS_PATH = CONFIG_DIR / "credentials.json"
 _TOKEN_PATH = CONFIG_DIR / "token.json"
 
 
+def ensure_config_permissions() -> None:
+    """Ensure the config directory and secret files have restrictive permissions."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.chmod(0o700)
+    if _CREDS_PATH.exists():
+        _CREDS_PATH.chmod(0o600)
+    if _TOKEN_PATH.exists():
+        _TOKEN_PATH.chmod(0o600)
+
+
 def get_credentials() -> Credentials:
     """Return valid OAuth2 credentials, running the browser flow if needed.
 
@@ -34,6 +46,8 @@ def get_credentials() -> Credentials:
             "in that directory, then run:  project-creator setup\n\n"
             "See README.md for step-by-step instructions."
         )
+
+    ensure_config_permissions()
 
     creds: Optional[Credentials] = None
 
@@ -56,9 +70,7 @@ def get_credentials() -> Credentials:
             creds = flow.run_local_server(port=0)
 
         # Persist token for future runs
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_DIR.chmod(0o700)
         _TOKEN_PATH.write_text(creds.to_json())
-        _TOKEN_PATH.chmod(0o600)
+        ensure_config_permissions()
 
     return creds

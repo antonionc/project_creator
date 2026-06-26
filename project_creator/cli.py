@@ -1,5 +1,7 @@
 """Click-based CLI for the Red Hat Proposal Creator."""
 
+# Assisted-by: Cursor
+
 from __future__ import annotations  # enables X | Y union syntax on Python 3.9
 
 import webbrowser
@@ -13,7 +15,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from .auth import get_credentials, CONFIG_DIR
+from .auth import ensure_config_permissions, get_credentials, CONFIG_DIR
 from .config import (
     CONFIG_PATH,
     load_config,
@@ -77,8 +79,7 @@ def setup() -> None:
         )
     )
 
-    # Ensure config dir exists
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_config_permissions()
     config = load_config()
 
     # ── 1. Check credentials.json ──────────────────────────────────────────
@@ -93,6 +94,7 @@ def setup() -> None:
         raise SystemExit(1)
 
     console.print("\n[green]✔[/green]  credentials.json found.")
+    ensure_config_permissions()
 
     # ── 2. Authorize with Google ───────────────────────────────────────────
     console.print("\n[bold]Authorizing with Google...[/bold]")

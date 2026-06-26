@@ -1,7 +1,10 @@
 """Tests for project_creator.cli (Click commands)."""
 
+# Assisted-by: Cursor
+
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,6 +21,18 @@ from project_creator.cli import main, _MONTH_ABBREVS
 @pytest.fixture()
 def runner():
     return CliRunner()
+
+
+@contextmanager
+def patch_config_dirs(config_dir: Path):
+    """Patch config paths in both cli and auth so permission helpers stay in sync."""
+    creds_path = config_dir / "credentials.json"
+    token_path = config_dir / "token.json"
+    with patch("project_creator.cli.CONFIG_DIR", config_dir), \
+         patch("project_creator.auth.CONFIG_DIR", config_dir), \
+         patch("project_creator.auth._CREDS_PATH", creds_path), \
+         patch("project_creator.auth._TOKEN_PATH", token_path):
+        yield creds_path, token_path
 
 
 def _valid_config(proposal="PROP_ID", sow="SOW_ID", cu_calculator="CU_ID"):
@@ -54,7 +69,7 @@ class TestCliGroup:
 class TestSetupCommand:
     def test_exits_1_when_no_credentials_json(self, runner, tmp_path):
         config_dir = tmp_path / ".config" / "project_creator"
-        with patch("project_creator.cli.CONFIG_DIR", config_dir), \
+        with patch_config_dirs(config_dir), \
              patch("project_creator.cli.load_config", return_value=_valid_config()):
             result = runner.invoke(main, ["setup"])
         assert result.exit_code == 1
@@ -62,28 +77,27 @@ class TestSetupCommand:
 
     def test_saves_config_on_success(self, runner, tmp_path):
         config_dir = tmp_path / ".config" / "project_creator"
-        creds_path = config_dir / "credentials.json"
-        creds_path.parent.mkdir(parents=True)
-        creds_path.write_text("{}")
+        with patch_config_dirs(config_dir) as (creds_path, _):
+            creds_path.parent.mkdir(parents=True, exist_ok=True)
+            creds_path.write_text("{}")
 
-        mock_creds = MagicMock()
-        mock_service = MagicMock()
-        mock_service.about().get().execute.return_value = {
-            "user": {"emailAddress": "test@example.com"}
-        }
+            mock_creds = MagicMock()
+            mock_service = MagicMock()
+            mock_service.about().get().execute.return_value = {
+                "user": {"emailAddress": "test@example.com"}
+            }
 
-        with patch("project_creator.cli.CONFIG_DIR", config_dir), \
-             patch("project_creator.cli.load_config", return_value=_valid_config()), \
-             patch("project_creator.cli.save_config") as mock_save, \
-             patch("project_creator.cli.get_credentials", return_value=mock_creds), \
-             patch("project_creator.cli.build_service", return_value=mock_service), \
-             patch("project_creator.cli.parse_file_id", side_effect=lambda x: x):
-            result = runner.invoke(
-                main,
-                ["setup"],
-                # proposal, sow, cu_calculator, gfa_url, search root, default_geo, auto_submit
-                input="PROP\nSOW\nCU_CALC\nhttps://red.ht/gfa\n\n\n\n",
-            )
+            with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+                 patch("project_creator.cli.save_config") as mock_save, \
+                 patch("project_creator.cli.get_credentials", return_value=mock_creds), \
+                 patch("project_creator.cli.build_service", return_value=mock_service), \
+                 patch("project_creator.cli.parse_file_id", side_effect=lambda x: x):
+                result = runner.invoke(
+                    main,
+                    ["setup"],
+                    # proposal, sow, cu_calculator, gfa_url, search root, default_geo, auto_submit
+                    input="PROP\nSOW\nCU_CALC\nhttps://red.ht/gfa\n\n\n\n",
+                )
 
         assert mock_save.called
         saved_config = mock_save.call_args[0][0]
@@ -91,14 +105,13 @@ class TestSetupCommand:
 
     def test_exits_1_when_auth_fails(self, runner, tmp_path):
         config_dir = tmp_path / ".config" / "project_creator"
-        creds_path = config_dir / "credentials.json"
-        creds_path.parent.mkdir(parents=True)
-        creds_path.write_text("{}")
+        with patch_config_dirs(config_dir) as (creds_path, _):
+            creds_path.parent.mkdir(parents=True, exist_ok=True)
+            creds_path.write_text("{}")
 
-        with patch("project_creator.cli.CONFIG_DIR", config_dir), \
-             patch("project_creator.cli.load_config", return_value=_valid_config()), \
-             patch("project_creator.cli.get_credentials", side_effect=Exception("auth error")):
-            result = runner.invoke(main, ["setup"], input="\n\n\n\n")
+            with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+                 patch("project_creator.cli.get_credentials", side_effect=Exception("auth error")):
+                result = runner.invoke(main, ["setup"], input="\n\n\n\n")
 
         assert result.exit_code == 1
         assert "Authorization failed" in result.output or "auth error" in result.output
