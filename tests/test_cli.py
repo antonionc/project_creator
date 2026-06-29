@@ -44,6 +44,10 @@ def _valid_config(proposal="PROP_ID", sow="SOW_ID", cu_calculator="CU_ID"):
             "gfa_form_url": "https://red.ht/gfa",
         },
         "search_root_id": "",
+        "gfa": {
+            "domain": "redhat.com",
+            "domain_allow_list": ["redhat.com"],
+        },
     }
 
 
@@ -56,6 +60,7 @@ class TestCliGroup:
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
         assert "Proposal Creator" in result.output
+        assert "--verbose" in result.output
 
     def test_unknown_command(self, runner):
         result = runner.invoke(main, ["nonexistent"])
@@ -501,6 +506,81 @@ class TestHandleGfa:
 
         assert result.exit_code == 0
         assert "using provided gfa url" in result.output.lower()
+
+    def test_invalid_gfa_url_is_rejected(self, runner):
+        mock_match, _ = self._gfa_patches()
+        with patch("project_creator.cli.load_config", return_value=_valid_config()), \
+             patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
+             patch("project_creator.cli.build_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
+             patch("project_creator.cli.search_folders", return_value=[mock_match]), \
+             patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
+             patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
+             patch("project_creator.cli.get_folder_url", return_value="http://x"), \
+             patch("project_creator.cli.rename_file") as mock_rename:
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr",
+                 "--gfa-url=https://evil.example.com/not-a-sheet"],
+                input="y\n",
+            )
+
+        mock_rename.assert_not_called()
+        assert "invalid gfa sheet url" in result.output.lower()
+
+    def test_disallowed_domain_blocks_create(self, runner):
+        config = _valid_config()
+        config["gfa"] = {
+            "domain": "example.com",
+            "domain_allow_list": ["redhat.com"],
+        }
+        with patch("project_creator.cli.load_config", return_value=config):
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr", "--skip-gfa"],
+            )
+
+        assert result.exit_code == 1
+        assert "domain_allow_list" in result.output.lower()
+
+    def test_non_default_domain_requires_confirmation(self, runner):
+        mock_match, _ = self._gfa_patches()
+        config = _valid_config()
+        config["gfa"] = {
+            "domain": "ibm.com",
+            "domain_allow_list": ["redhat.com", "ibm.com"],
+        }
+        with patch("project_creator.cli.load_config", return_value=config), \
+             patch("project_creator.cli.get_credentials", return_value=MagicMock()), \
+             patch("project_creator.cli.build_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_sheets_service", return_value=MagicMock()), \
+             patch("project_creator.cli.build_gmail_service", return_value=MagicMock()), \
+             patch("project_creator.cli.search_folders", return_value=[mock_match]), \
+             patch("project_creator.cli.build_proposal_folder", return_value="PROJ_ID"), \
+             patch("project_creator.cli.find_file_by_name", return_value=None), \
+             patch("project_creator.cli.copy_file", return_value="COPY_ID"), \
+             patch("project_creator.cli.get_folder_url", return_value="http://x"), \
+             patch("project_creator.cli.fill_gfa_form"), \
+             patch("project_creator.cli.wait_for_gfa_email",
+                   return_value="https://docs.google.com/spreadsheets/d/GFA123/edit"), \
+             patch("project_creator.cli.rename_file"), \
+             patch("project_creator.cli.create_shortcut"), \
+             patch("project_creator.cli.add_commenter_permission") as mock_perm, \
+             patch("project_creator.cli.apply_modifications"), \
+             patch("project_creator.cli.Confirm.ask", side_effect=[True, False]):
+            result = runner.invoke(
+                main,
+                ["create", "--account=Acme", "--project=Alpha",
+                 "--opportunity-id=OPP01", "--year=2026", "--month=Apr"],
+                input="y\n",
+            )
+
+        mock_perm.assert_not_called()
+        assert "permission grant skipped" in result.output.lower()
 
     def test_gfa_skipped_when_user_leaves_url_blank(self, runner):
         mock_match, _ = self._gfa_patches()

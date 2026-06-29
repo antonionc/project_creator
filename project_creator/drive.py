@@ -1,5 +1,7 @@
 """Google Drive API wrapper for proposal folder creation."""
 
+# Assisted-by: Cursor
+
 from __future__ import annotations
 
 import re
@@ -11,6 +13,7 @@ from googleapiclient.errors import HttpError
 
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
+_SPREADSHEET_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 # supportsAllDrives is accepted by both files().get() and files().list()
 _GET_KWARGS = {
@@ -358,3 +361,11 @@ def parse_file_id(url_or_id: str) -> str:
 
     # Assume the raw input is already an ID
     return url_or_id.strip()
+
+
+def validate_spreadsheet_url(url_or_id: str) -> Optional[str]:
+    """Return a normalized Google Sheets URL if *url_or_id* is valid, else None."""
+    file_id = parse_file_id(url_or_id.strip())
+    if not file_id or not _SPREADSHEET_ID_RE.fullmatch(file_id):
+        return None
+    return f"https://docs.google.com/spreadsheets/d/{file_id}/edit"

@@ -32,10 +32,12 @@ You need a Google Cloud project with the Drive API enabled and an OAuth 2.0 clie
 2. Click **"Select a project"** → **"New Project"**
 3. Name it (e.g. `rh-proposal-creator`) and click **"Create"**
 
-### Step 2 — Enable the Google Drive API
+### Step 2 — Enable Google APIs
 
 1. In your project, go to **"APIs & Services"** → **"Library"**
-2. Search for **"Google Drive API"** and click **"Enable"**
+2. Search for and enable:
+   - **Google Drive API** (required for folder and file operations)
+   - **Gmail API** (required for the `gmail.readonly` OAuth scope — see [Gmail access](#gmail-access-gmailreadonly) below)
 
 ### Step 3 — Create OAuth 2.0 Credentials
 
@@ -62,8 +64,8 @@ project-creator setup
 
 This will:
 - Verify `credentials.json` exists
-- Open a browser tab asking you to authorize Drive access
-- Save a `token.json` in `~/.config/project_creator/` — reused automatically on future runs
+- Open a browser tab asking you to authorize Google access (Drive and Gmail read-only)
+- Save your OAuth token for reuse on future runs — in the **macOS Keychain** on Mac, or as `token.json` on other platforms (see [Token storage](#token-storage-and-device-security))
 - Prompt you to enter your template file IDs and optional search scope
 
 ---
@@ -158,8 +160,61 @@ $ project-creator create
 
 ## Security
 
-- `credentials.json` and `token.json` are stored only in `~/.config/project_creator/` and are listed in `.gitignore` — **never commit them**
-- The OAuth scopes used are `https://www.googleapis.com/auth/drive` (full Drive access required to create folders, copy files, and create shortcuts across Shared Drives) and `https://www.googleapis.com/auth/gmail.readonly` (read-only Gmail access required to poll your inbox and automatically retrieve the GFA form response email)
+### OAuth scopes
+
+| Scope | Purpose |
+|---|---|
+| `https://www.googleapis.com/auth/drive` | Create folders, copy templates, rename files, and manage shortcuts across Shared Drives |
+| `https://www.googleapis.com/auth/gmail.readonly` | Poll your inbox for the automated GFA response email after form submission |
+
+### Gmail access (`gmail.readonly`)
+
+The tool requests **read-only** Gmail access so it can wait for the GFA confirmation email and extract the Google Sheets link automatically. This scope:
+
+- **Can** list and read messages in your inbox (used only to search for GFA emails matching the customer account)
+- **Cannot** send, delete, or modify email, labels, or drafts
+
+If you prefer not to grant Gmail access:
+
+| Option | When to use |
+|---|---|
+| `--gfa-url URL` | You already have the GFA sheet URL or ID — skips browser submission **and** Gmail polling |
+| `--skip-gfa` | You will add the GFA shortcut manually later |
+
+Example without Gmail polling:
+
+```bash
+project-creator create --account "Acme" --project "Alpha" \
+  --gfa-url "https://docs.google.com/spreadsheets/d/SHEET_ID/edit"
+```
+
+To revoke access later: [Google Account → Third-party apps with account access](https://myaccount.google.com/permissions).
+
+### Token storage and device security
+
+OAuth tokens grant broad Drive access. Protect the machine where you run this tool:
+
+| Platform | Token storage | Recommendations |
+|---|---|---|
+| **macOS** | Encrypted in **Keychain** via `keyring` (service: `project-creator`) — **required**; Keychain failures block authentication rather than falling back to plaintext | Enable **FileVault**, require password on wake, use a screen lock, and do not share your user account |
+| **Linux / Windows** | Plaintext `~/.config/project_creator/token.json` (`0o600`) | Encrypt the home directory or full disk, lock the screen when away, restrict file permissions on shared hosts |
+
+Additional practices:
+
+- **Never commit** `credentials.json` or `token.json` — both are listed in `.gitignore`
+- **Do not run** on shared or multi-user machines where others can access your home directory or Keychain
+- **Revoke tokens** promptly if a laptop is lost or you stop using the tool ([Google Account permissions](https://myaccount.google.com/permissions))
+- **Re-authenticate** after scope changes by running `project-creator setup` (stale tokens are removed automatically)
+
+On macOS, existing plaintext `token.json` files are migrated to Keychain on the next successful login and the file is removed.
+
+### Other protections
+
+- OAuth secret files are created with restrictive permissions (`0o700` on the config directory, `0o600` on credential files)
+- The Playwright Chrome profile at `~/.project_creator_chrome` is also restricted to `0o700` — do not run this tool on shared machines where other users can access your home directory
+- Verbose debug output (Gmail polling details, browser automation traces) is off by default; enable with `--verbose` or `PROJECT_CREATOR_DEBUG=1`
+- GFA domain sharing is restricted by `gfa.domain_allow_list` in config (default: `redhat.com` only); non-default domains require confirmation before granting access
+- Gmail search values and GFA sheet URLs are validated before use; modification YAML writes use `RAW` input by default to avoid formula injection
 - Tokens are refreshed automatically; re-authorization is only needed if you revoke access in your Google account settings
 
 ---

@@ -8,8 +8,19 @@ from project_creator.gmail import (
     _extract_link_from_html,
     _get_body,
     build_gmail_service,
+    escape_gmail_query_value,
     wait_for_gfa_email,
 )
+from project_creator.verbose import set_verbose
+
+
+# ---------------------------------------------------------------------------
+# escape_gmail_query_value
+# ---------------------------------------------------------------------------
+
+def test_escape_gmail_query_value_quotes_and_backslashes():
+    assert escape_gmail_query_value('Acme "Special" Corp') == r'Acme \"Special\" Corp'
+    assert escape_gmail_query_value(r"Back\slash") == r"Back\\slash"
 
 
 # ---------------------------------------------------------------------------
@@ -31,12 +42,17 @@ def test_extract_link_from_html():
     html_body = '''
     <html>
         <body>
-            <p>Your GFA is ready. Click <a href="https://example.com/sheet">here</a> to view it.</p>
+            <p>Your GFA is ready. Click <a href="https://docs.google.com/spreadsheets/d/abc123/edit">here</a> to view it.</p>
         </body>
     </html>
     '''
     link = _extract_link_from_html(html_body)
-    assert link == "https://example.com/sheet"
+    assert link == "https://docs.google.com/spreadsheets/d/abc123/edit"
+
+
+def test_extract_link_rejects_non_google_sheets_url():
+    html_body = '<a href="https://example.com/sheet">here</a>'
+    assert _extract_link_from_html(html_body) is None
 
 
 def test_extract_link_from_html_no_match():
@@ -53,16 +69,16 @@ def test_extract_link_from_html_no_match():
 
 def test_extract_link_case_insensitive_here():
     """Link text matching is lower-cased before comparing."""
-    html_body = '<a href="https://example.com/x">HERE</a>'
+    html_body = '<a href="https://docs.google.com/spreadsheets/d/abc123/edit">HERE</a>'
     link = _extract_link_from_html(html_body)
-    assert link == "https://example.com/x"
+    assert link == "https://docs.google.com/spreadsheets/d/abc123/edit"
 
 
 def test_extract_link_here_with_trailing_period():
     """Anchor text 'here.' (with trailing punctuation) should still match."""
     html_body = '<a href="https://docs.google.com/spreadsheets/d/1abc">here.</a>'
     link = _extract_link_from_html(html_body)
-    assert link == "https://docs.google.com/spreadsheets/d/1abc"
+    assert link == "https://docs.google.com/spreadsheets/d/1abc/edit"
 
 
 def test_extract_link_fallback_regex():
@@ -70,7 +86,7 @@ def test_extract_link_fallback_regex():
     # Simulates plain text where there are no anchor tags, or anchor text is different
     text_body = "Your form was processed. https://docs.google.com/spreadsheets/d/1abcxyz-_9/edit?usp=sharing"
     link = _extract_link_from_html(text_body)
-    assert link == "https://docs.google.com/spreadsheets/d/1abcxyz-_9/edit?usp=sharing"
+    assert link == "https://docs.google.com/spreadsheets/d/1abcxyz-_9/edit"
 
 
 # ---------------------------------------------------------------------------
@@ -262,3 +278,45 @@ def test_wait_for_gfa_email_subject_no_opportunity_id(mock_time, mock_sleep):
     )
 
     assert url is None
+
+
+@patch("project_creator.gmail.time.sleep")
+@patch("project_creator.gmail.time.time")
+def test_wait_for_gfa_email_suppresses_debug_by_default(mock_time, mock_sleep, capsys):
+    """Gmail polling must not print query/subject details unless verbose is enabled."""
+    set_verbose(False)
+    mock_time.side_effect = [0, 100, 100, 700, 700]
+    mock_service = MagicMock()
+    mock_service.users().messages().list().execute.return_value = {"messages": []}
+
+    wait_for_gfa_email(
+        gmail_service=mock_service,
+        account="Acme Corp",
+        opportunity_id="12345",
+        start_time=0,
+        timeout_s=600,
+    )
+
+    captured = capsys.readouterr()
+    assert "Debug: Polling Gmail" not in captured.out
+
+
+@patch("project_creator.gmail.time.sleep")
+@patch("project_creator.gmail.time.time")
+def test_wait_for_gfa_email_prints_debug_when_verbose(mock_time, mock_sleep, capsys):
+    set_verbose(True)
+    mock_time.side_effect = [0, 100, 100, 700, 700]
+    mock_service = MagicMock()
+    mock_service.users().messages().list().execute.return_value = {"messages": []}
+
+    wait_for_gfa_email(
+        gmail_service=mock_service,
+        account="Acme Corp",
+        opportunity_id="12345",
+        start_time=0,
+        timeout_s=600,
+    )
+
+    captured = capsys.readouterr()
+    assert "Debug: Polling Gmail" in captured.out
+    set_verbose(False)

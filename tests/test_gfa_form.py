@@ -19,6 +19,7 @@ from project_creator.gfa_form import (
     _fill_text_input,
     _select_dropdown,
     _show_review_table,
+    ensure_chrome_profile_permissions,
     fill_gfa_form,
 )
 
@@ -61,6 +62,23 @@ def _patch_sp(mock_p):
     cm.__enter__ = MagicMock(return_value=mock_p)
     cm.__exit__ = MagicMock(return_value=False)
     return cm
+
+
+# ---------------------------------------------------------------------------
+# Chrome profile permissions
+# ---------------------------------------------------------------------------
+
+class TestChromeProfilePermissions:
+    def test_ensure_chrome_profile_permissions(self, tmp_path, monkeypatch):
+        profile_dir = tmp_path / "chrome_profile"
+        monkeypatch.setattr("project_creator.gfa_form.CHROME_PROFILE_DIR", profile_dir)
+
+        result = ensure_chrome_profile_permissions()
+
+        assert result == profile_dir
+        assert profile_dir.is_dir()
+        import stat
+        assert stat.S_IMODE(profile_dir.stat().st_mode) == 0o700
 
 
 # ---------------------------------------------------------------------------

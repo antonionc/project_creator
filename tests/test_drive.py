@@ -21,6 +21,7 @@ from project_creator.drive import (
     parse_file_id,
     rename_file,
     search_folders,
+    validate_spreadsheet_url,
     write_cell,
     _FOLDER_MIME,
     _SHORTCUT_MIME,
@@ -521,7 +522,7 @@ class TestApplyModifications:
         mock_sheets.spreadsheets().values().batchUpdate.assert_called_once()
         call_kwargs = mock_sheets.spreadsheets().values().batchUpdate.call_args[1]
         assert call_kwargs["spreadsheetId"] == "FILE123"
-        assert call_kwargs["body"]["valueInputOption"] == "USER_ENTERED"
+        assert call_kwargs["body"]["valueInputOption"] == "RAW"
         assert call_kwargs["body"]["data"] == [
             {"range": "'Sheet1'!A1", "values": [["hello"]]}
         ]
@@ -690,3 +691,22 @@ class TestParseFileId:
     def test_url_with_no_recognized_pattern_returned_as_is(self):
         url = "https://example.com/no/match/here"
         assert parse_file_id(url) == url.strip()
+
+
+class TestValidateSpreadsheetUrl:
+    @pytest.mark.parametrize("url_or_id", [
+        "https://docs.google.com/spreadsheets/d/abc123/edit",
+        "abc123",
+        "  abc123  ",
+    ])
+    def test_accepts_valid_spreadsheet_refs(self, url_or_id):
+        assert validate_spreadsheet_url(url_or_id) == "https://docs.google.com/spreadsheets/d/abc123/edit"
+
+    @pytest.mark.parametrize("url_or_id", [
+        "https://example.com/sheet",
+        "not a valid id!",
+        "",
+        "javascript:alert(1)",
+    ])
+    def test_rejects_invalid_spreadsheet_refs(self, url_or_id):
+        assert validate_spreadsheet_url(url_or_id) is None
