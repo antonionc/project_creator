@@ -11,6 +11,7 @@ import pytest
 
 from project_creator import token_store as token_store_module
 from project_creator.token_store import (
+    KeychainStorageError,
     delete_token_json,
     load_token_json,
     save_token_json,
@@ -92,3 +93,53 @@ class TestKeychainTokenStorage:
         assert loaded == '{"token": "legacy"}'
         assert not token_path.exists()
         assert store["project-creator:google-oauth-token"] == '{"token": "legacy"}'
+
+    def test_save_raises_on_keychain_failure(self, token_path, monkeypatch):
+        monkeypatch.setattr(token_store_module, "uses_keychain_storage", lambda: True)
+
+        mock_keyring = MagicMock()
+        mock_keyring.set_password.side_effect = RuntimeError("keychain locked")
+        mock_keyring.errors.PasswordDeleteError = Exception
+
+        with patch.dict("sys.modules", {"keyring": mock_keyring}):
+            with pytest.raises(KeychainStorageError, match="Failed to save"):
+                save_token_json(token_path, '{"token": "secure"}')
+
+        assert not token_path.exists()
+
+    def test_load_raises_on_keychain_failure(self, token_path, monkeypatch):
+        monkeypatch.setattr(token_store_module, "uses_keychain_storage", lambda: True)
+
+        mock_keyring = MagicMock()
+        mock_keyring.get_password.side_effect = RuntimeError("keychain unavailable")
+        mock_keyring.errors.PasswordDeleteError = Exception
+
+        with patch.dict("sys.modules", {"keyring": mock_keyring}):
+            with pytest.raises(KeychainStorageError, match="Failed to read"):
+                load_token_json(token_path)
+
+    def test_migration_does_not_delete_plaintext_when_save_fails(self, token_path, monkeypatch):
+        monkeypatch.setattr(token_store_module, "uses_keychain_storage", lambda: True)
+        token_path.write_text('{"token": "legacy"}')
+
+        mock_keyring = MagicMock()
+        mock_keyring.get_password.return_value = None
+        mock_keyring.set_password.side_effect = RuntimeError("keychain locked")
+        mock_keyring.errors.PasswordDeleteError = Exception
+
+        with patch.dict("sys.modules", {"keyring": mock_keyring}):
+            with pytest.raises(KeychainStorageError, match="Failed to save"):
+                load_token_json(token_path)
+
+        assert token_path.read_text() == '{"token": "legacy"}'
+
+    def test_missing_keyring_raises_on_macos(self, token_path, monkeypatch):
+        monkeypatch.setattr(token_store_module, "uses_keychain_storage", lambda: True)
+
+        def _raise_import_error():
+            raise KeychainStorageError("The 'keyring' package is required on macOS")
+
+        monkeypatch.setattr(token_store_module, "_require_keyring", _raise_import_error)
+
+        with pytest.raises(KeychainStorageError, match="keyring"):
+            save_token_json(token_path, '{"token": "secure"}')

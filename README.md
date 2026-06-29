@@ -196,7 +196,7 @@ OAuth tokens grant broad Drive access. Protect the machine where you run this to
 
 | Platform | Token storage | Recommendations |
 |---|---|---|
-| **macOS** | Encrypted in **Keychain** via `keyring` (service: `project-creator`) | Enable **FileVault**, require password on wake, use a screen lock, and do not share your user account |
+| **macOS** | Encrypted in **Keychain** via `keyring` (service: `project-creator`) — **required**; Keychain failures block authentication rather than falling back to plaintext | Enable **FileVault**, require password on wake, use a screen lock, and do not share your user account |
 | **Linux / Windows** | Plaintext `~/.config/project_creator/token.json` (`0o600`) | Encrypt the home directory or full disk, lock the screen when away, restrict file permissions on shared hosts |
 
 Additional practices:
