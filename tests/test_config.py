@@ -13,6 +13,9 @@ import yaml
 import project_creator.config as cfg_module
 from project_creator.config import (
     _deep_merge,
+    DEFAULT_GFA_DOMAIN,
+    get_domain_allow_list,
+    is_domain_allowed,
     load_config,
     save_config,
     validate_config,
@@ -88,6 +91,8 @@ class TestLoadConfig:
         config = load_config()
         assert config["templates"]["gfa_form_url"] == "https://red.ht/gfa"
         assert config["search_root_id"] == ""
+        assert config["gfa"]["domain"] == DEFAULT_GFA_DOMAIN
+        assert config["gfa"]["domain_allow_list"] == ["redhat.com"]
 
     def test_loads_and_merges_existing_file(self, tmp_config):
         _, config_path = tmp_config
@@ -230,3 +235,35 @@ class TestValidateConfig:
         errors = validate_config(config)
         # Whitespace is truthy, so no error is raised (documents current behaviour)
         assert not any("templates.proposal" in e for e in errors)
+
+    def test_invalid_gfa_form_url(self):
+        config = self._full_config()
+        config["templates"]["gfa_form_url"] = "http://evil.example/form"
+        errors = validate_config(config)
+        assert any("gfa_form_url" in e for e in errors)
+
+    def test_domain_not_in_allow_list(self):
+        config = self._full_config()
+        config["gfa"] = {
+            "domain": "example.com",
+            "domain_allow_list": ["redhat.com"],
+        }
+        errors = validate_config(config)
+        assert any("domain_allow_list" in e for e in errors)
+
+    def test_world_writable_modifications_dir(self, tmp_path):
+        config = self._full_config()
+        mod_dir = tmp_path / "mods"
+        mod_dir.mkdir()
+        mod_dir.chmod(0o777)
+        config["modifications_dir"] = str(mod_dir)
+        errors = validate_config(config)
+        assert any("world-writable" in e or "group-" in e for e in errors)
+
+    def test_get_domain_allow_list_defaults(self):
+        assert get_domain_allow_list({}) == ["redhat.com"]
+
+    def test_is_domain_allowed(self):
+        config = {"gfa": {"domain_allow_list": ["redhat.com", "ibm.com"]}}
+        assert is_domain_allowed(config, "ibm.com")
+        assert not is_domain_allowed(config, "example.com")

@@ -14,3 +14,13 @@ templates:
 # Optional: restrict account folder searches to a specific Shared Drive or parent folder.
 # Leave empty ("") to search across all of Google Drive accessible to your account.
 search_root_id: ""
+
+# Optional: override the default YAML modifications directory.
+# modifications_dir: "~/.config/project_creator/modifications"
+
+# GFA workflow settings
+gfa:
+  domain: "redhat.com"
+  # Domains permitted when granting commenter access on GFA sheets.
+  domain_allow_list:
+    - "redhat.com"

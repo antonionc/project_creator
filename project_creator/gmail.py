@@ -13,6 +13,13 @@ from google.oauth2.credentials import Credentials
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from .verbose import is_verbose
+from .drive import validate_spreadsheet_url
+
+
+def escape_gmail_query_value(value: str) -> str:
+    """Escape a value for use inside a Gmail search double-quoted string."""
+    sanitized = value.replace("\n", " ").replace("\r", " ")
+    return sanitized.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def build_gmail_service(creds: Credentials) -> Any:
@@ -49,13 +56,16 @@ def _extract_link_from_html(html_body: str) -> Optional[str]:
     parser = _GFAEmailParser()
     parser.feed(html_body)
     if parser.found_url:
-        return parser.found_url
+        return validate_spreadsheet_url(parser.found_url)
 
     # Fallback: regex search for Google Sheets URL if the parser fails
     # (e.g. if the email is plain text or the anchor text isn't "here")
-    match = re.search(r'(https://docs\.google\.com/spreadsheets/d/[a-zA-Z0-9-_]+(?:/edit)?[^\s<">]*)', html_body)
+    match = re.search(
+        r"https://docs\.google\.com/spreadsheets/d/[a-zA-Z0-9_-]+(?:/edit)?[^\s<\">]*",
+        html_body,
+    )
     if match:
-        return match.group(1)
+        return validate_spreadsheet_url(match.group(0))
 
     return None
 
@@ -109,7 +119,7 @@ def wait_for_gfa_email(
     # The actual subject will contain the account and opportunity ID
     # Use a broad enough query to catch it reliably.
     # Subtract 1 hour (3600s) to account for clock skew between local and Google.
-    query = f'subject:"Your GFA for {account}" after:{start_time - 3600}'
+    query = f'subject:"Your GFA for {escape_gmail_query_value(account)}" after:{start_time - 3600}'
 
     start_wait = time.time()
     end_time = start_wait + timeout_s

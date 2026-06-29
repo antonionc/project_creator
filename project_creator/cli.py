@@ -7,7 +7,7 @@ from __future__ import annotations  # enables X | Y union syntax on Python 3.9
 import webbrowser
 from datetime import datetime, date, timedelta
 
-from typing import Optional
+from typing import Any, Optional
 
 import click
 from rich.console import Console
@@ -18,9 +18,11 @@ from rich.table import Table
 from .auth import ensure_config_permissions, get_credentials, CONFIG_DIR
 from .config import (
     CONFIG_PATH,
+    DEFAULT_GFA_DOMAIN,
     load_config,
     save_config,
     validate_config,
+    is_domain_allowed,
 )
 from .drive import (
     build_proposal_folder,
@@ -36,6 +38,7 @@ from .drive import (
     write_cell,
     find_file_by_name,
     add_commenter_permission,
+    validate_spreadsheet_url,
 )
 from .modifications import apply_modifications
 from .gmail import build_gmail_service, wait_for_gfa_email
@@ -553,8 +556,15 @@ def _handle_gfa(
         )
         return
 
-    gfa_file_id = parse_file_id(gfa_input.strip())
-    gfa_url = f"https://docs.google.com/spreadsheets/d/{gfa_file_id}/edit"
+    gfa_url = validate_spreadsheet_url(gfa_input.strip())
+    if not gfa_url:
+        console.print(
+            "[red]✗[/red]  Invalid GFA sheet URL or file ID. "
+            "Expected a Google Sheets URL or spreadsheet ID."
+        )
+        return
+
+    gfa_file_id = parse_file_id(gfa_url)
 
     # Rename original
     try:
@@ -576,16 +586,29 @@ def _handle_gfa(
         console.print(f"[red]✗[/red]  Failed to create GFA shortcut: {exc}")
 
     # Share GFA file with domain (Red Hat)
-    try:
-        domain = config.get("gfa", {}).get("domain", "redhat.com")
-        add_commenter_permission(service, gfa_file_id, domain)
+    domain = config.get("gfa", {}).get("domain", DEFAULT_GFA_DOMAIN).lower().strip()
+    if not is_domain_allowed(config, domain):
         console.print(
-            f"[green]✔[/green]  Permissions: commenter access granted to anyone in [bold]{domain}[/bold] with the link"
+            f"[yellow]⚠[/yellow]  Domain [bold]{domain}[/bold] is not in "
+            f"gfa.domain_allow_list; skipping permission grant."
         )
-    except Exception as exc:
-        console.print(
-            f"[yellow]⚠[/yellow]  Could not update access permissions on GFA file (continuing anyway): {exc}"
-        )
+    elif domain != DEFAULT_GFA_DOMAIN and not Confirm.ask(
+        f"\n  Grant commenter access to anyone in [bold]{domain}[/bold] with the link?",
+        default=False,
+    ):
+        console.print("[dim]  Domain permission grant skipped.[/dim]")
+    else:
+        try:
+            add_commenter_permission(service, gfa_file_id, domain)
+            console.print(
+                f"[green]✔[/green]  Permissions: commenter access granted to anyone in "
+                f"[bold]{domain}[/bold] with the link"
+            )
+        except Exception as exc:
+            console.print(
+                f"[yellow]⚠[/yellow]  Could not update access permissions on GFA file "
+                f"(continuing anyway): {exc}"
+            )
 
 
     variables["gfa_url"] = gfa_url

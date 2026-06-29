@@ -1,14 +1,19 @@
 """Customizable and safe modifications for Google Drive files."""
 
+# Assisted-by: Cursor
+
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .drive import build_service, build_sheets_service, _GET_KWARGS
+
+DEFAULT_SHEET_INPUT_OPTION = "RAW"
 
 
 def format_value(val: Any, variables: dict[str, Any]) -> Any:
@@ -145,7 +150,12 @@ def apply_modifications(
                 else:
                     values_grid = [[value_val]]
 
-                sheet_updates.append({"range": range_val, "values": values_grid})
+                input_option = formatted_mod.get("input_option", DEFAULT_SHEET_INPUT_OPTION)
+                sheet_updates.append({
+                    "range": range_val,
+                    "values": values_grid,
+                    "input_option": input_option,
+                })
 
         elif mime_type == "application/vnd.google-apps.presentation":
             find_str = formatted_mod.get("find")
@@ -215,16 +225,23 @@ def apply_modifications(
         if sheets_service is None:
             sheets_service = build_sheets_service(creds)
 
-        try:
-            sheets_service.spreadsheets().values().batchUpdate(
-                spreadsheetId=file_id,
-                body={
-                    "valueInputOption": "USER_ENTERED",
-                    "data": sheet_updates,
-                },
-            ).execute()
-        except Exception as exc:
-            from rich.console import Console
-            Console().print(
-                f"[yellow]⚠ Warning: Failed to batch update spreadsheet {file_id}: {exc}[/yellow]"
-            )
+        updates_by_option: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for update in sheet_updates:
+            option = update.pop("input_option", DEFAULT_SHEET_INPUT_OPTION)
+            updates_by_option[option].append(update)
+
+        for input_option, data in updates_by_option.items():
+            try:
+                sheets_service.spreadsheets().values().batchUpdate(
+                    spreadsheetId=file_id,
+                    body={
+                        "valueInputOption": input_option,
+                        "data": data,
+                    },
+                ).execute()
+            except Exception as exc:
+                from rich.console import Console
+                Console().print(
+                    f"[yellow]⚠ Warning: Failed to batch update spreadsheet {file_id} "
+                    f"with {input_option}: {exc}[/yellow]"
+                )
