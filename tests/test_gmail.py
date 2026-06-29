@@ -10,6 +10,7 @@ from project_creator.gmail import (
     build_gmail_service,
     wait_for_gfa_email,
 )
+from project_creator.verbose import set_verbose
 
 
 # ---------------------------------------------------------------------------
@@ -262,3 +263,45 @@ def test_wait_for_gfa_email_subject_no_opportunity_id(mock_time, mock_sleep):
     )
 
     assert url is None
+
+
+@patch("project_creator.gmail.time.sleep")
+@patch("project_creator.gmail.time.time")
+def test_wait_for_gfa_email_suppresses_debug_by_default(mock_time, mock_sleep, capsys):
+    """Gmail polling must not print query/subject details unless verbose is enabled."""
+    set_verbose(False)
+    mock_time.side_effect = [0, 100, 100, 700, 700]
+    mock_service = MagicMock()
+    mock_service.users().messages().list().execute.return_value = {"messages": []}
+
+    wait_for_gfa_email(
+        gmail_service=mock_service,
+        account="Acme Corp",
+        opportunity_id="12345",
+        start_time=0,
+        timeout_s=600,
+    )
+
+    captured = capsys.readouterr()
+    assert "Debug: Polling Gmail" not in captured.out
+
+
+@patch("project_creator.gmail.time.sleep")
+@patch("project_creator.gmail.time.time")
+def test_wait_for_gfa_email_prints_debug_when_verbose(mock_time, mock_sleep, capsys):
+    set_verbose(True)
+    mock_time.side_effect = [0, 100, 100, 700, 700]
+    mock_service = MagicMock()
+    mock_service.users().messages().list().execute.return_value = {"messages": []}
+
+    wait_for_gfa_email(
+        gmail_service=mock_service,
+        account="Acme Corp",
+        opportunity_id="12345",
+        start_time=0,
+        timeout_s=600,
+    )
+
+    captured = capsys.readouterr()
+    assert "Debug: Polling Gmail" in captured.out
+    set_verbose(False)

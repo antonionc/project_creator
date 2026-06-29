@@ -159,6 +159,9 @@ $ project-creator create
 ## Security
 
 - `credentials.json` and `token.json` are stored only in `~/.config/project_creator/` and are listed in `.gitignore` — **never commit them**
+- OAuth secret files are created with restrictive permissions (`0o700` on the config directory, `0o600` on credential files)
+- The Playwright Chrome profile at `~/.project_creator_chrome` is also restricted to `0o700` — do not run this tool on shared machines where other users can access your home directory
+- Verbose debug output (Gmail polling details, browser automation traces) is off by default; enable with `--verbose` or `PROJECT_CREATOR_DEBUG=1`
 - The OAuth scopes used are `https://www.googleapis.com/auth/drive` (full Drive access required to create folders, copy files, and create shortcuts across Shared Drives) and `https://www.googleapis.com/auth/gmail.readonly` (read-only Gmail access required to poll your inbox and automatically retrieve the GFA form response email)
 - Tokens are refreshed automatically; re-authorization is only needed if you revoke access in your Google account settings
 

@@ -40,6 +40,7 @@ from .drive import (
 from .modifications import apply_modifications
 from .gmail import build_gmail_service, wait_for_gfa_email
 from .gfa_form import fill_gfa_form
+from .verbose import set_verbose
 import time
 
 console = Console()
@@ -56,9 +57,20 @@ _MONTH_ABBREVS = {
 # ---------------------------------------------------------------------------
 
 @click.group()
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Print detailed debug output (Gmail polling, browser automation).",
+)
 @click.version_option(package_name="project-creator")
-def main() -> None:
+@click.pass_context
+def main(ctx: click.Context, verbose: bool) -> None:
     """Red Hat Proposal Creator — automates Google Drive proposal setup."""
+    set_verbose(verbose)
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
 
 
 # ---------------------------------------------------------------------------

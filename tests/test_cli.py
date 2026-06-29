@@ -56,6 +56,7 @@ class TestCliGroup:
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
         assert "Proposal Creator" in result.output
+        assert "--verbose" in result.output
 
     def test_unknown_command(self, runner):
         result = runner.invoke(main, ["nonexistent"])
