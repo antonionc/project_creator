@@ -12,6 +12,7 @@ from google.auth.exceptions import RefreshError
 
 import project_creator.auth as auth_module
 from project_creator.auth import get_credentials, SCOPES
+from project_creator import token_store as token_store_module
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +28,7 @@ def tmp_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(auth_module, "CONFIG_DIR", config_dir)
     monkeypatch.setattr(auth_module, "_CREDS_PATH", creds_path)
     monkeypatch.setattr(auth_module, "_TOKEN_PATH", token_path)
+    monkeypatch.setattr(token_store_module, "uses_keychain_storage", lambda: False)
     return config_dir, creds_path, token_path
 
 
@@ -66,7 +68,7 @@ class TestGetCredentialsValidToken:
         mock_creds = MagicMock()
         mock_creds.valid = True
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds):
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds):
             result = get_credentials()
 
         assert result is mock_creds
@@ -79,7 +81,7 @@ class TestGetCredentialsValidToken:
         mock_creds = MagicMock()
         mock_creds.valid = True
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds):
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds):
             get_credentials()
 
         mock_creds.refresh.assert_not_called()
@@ -94,7 +96,7 @@ class TestGetCredentialsValidToken:
         mock_creds = MagicMock()
         mock_creds.valid = True
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds):
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds):
             get_credentials()
 
         assert stat.S_IMODE(config_dir.stat().st_mode) == 0o700
@@ -117,7 +119,7 @@ class TestGetCredentialsExpiredToken:
         mock_creds.refresh_token = "REFRESH"
         mock_creds.to_json.return_value = '{"token": "new"}'
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds), \
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds), \
              patch("project_creator.auth.Request") as mock_request:
             result = get_credentials()
 
@@ -135,7 +137,7 @@ class TestGetCredentialsExpiredToken:
         mock_creds.refresh_token = "REFRESH"
         mock_creds.to_json.return_value = '{"token": "new"}'
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds), \
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds), \
              patch("project_creator.auth.Request"):
             get_credentials()
 
@@ -154,7 +156,7 @@ class TestGetCredentialsExpiredToken:
         mock_creds.refresh_token = "REFRESH"
         mock_creds.to_json.return_value = '{"token": "new"}'
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds), \
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds), \
              patch("project_creator.auth.Request"):
             get_credentials()
 
@@ -179,7 +181,7 @@ class TestGetCredentialsRefreshError:
         mock_creds.refresh_token = "REFRESH"
         mock_creds.refresh.side_effect = RefreshError("token revoked")
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds), \
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds), \
              patch("project_creator.auth.Request"):
             with pytest.raises(RuntimeError, match="setup"):
                 get_credentials()
@@ -244,7 +246,7 @@ class TestGetCredentialsBrowserFlow:
         mock_flow = MagicMock()
         mock_flow.run_local_server.return_value = fresh_creds
 
-        with patch("project_creator.auth.Credentials.from_authorized_user_file", return_value=mock_creds), \
+        with patch("project_creator.auth.Credentials.from_authorized_user_info", return_value=mock_creds), \
              patch("project_creator.auth.InstalledAppFlow.from_client_secrets_file", return_value=mock_flow):
             result = get_credentials()
 
