@@ -103,6 +103,27 @@ def search_folders(
         path = _get_folder_path(service, f["id"])
         folders.append({"id": f["id"], "name": f["name"], "path": path})
 
+    # Also search for shortcuts pointing to folders with this name.
+    q_sc = f"mimeType='{_SHORTCUT_MIME}' and name='{escaped}' and trashed=false"
+    if parent_id:
+        q_sc += f" and '{parent_id}' in parents"
+    sc_results = service.files().list(
+        q=q_sc,
+        fields="files(id,name,shortcutDetails)",
+        corpora="allDrives",
+        **_LIST_KWARGS,
+    ).execute()
+
+    seen_ids = {f["id"] for f in folders}
+    for sc in sc_results.get("files", []):
+        details = sc.get("shortcutDetails", {})
+        target_id = details.get("targetId")
+        target_mime = details.get("targetMimeType", "")
+        if target_id and target_mime == _FOLDER_MIME and target_id not in seen_ids:
+            seen_ids.add(target_id)
+            path = _get_folder_path(service, target_id)
+            folders.append({"id": target_id, "name": sc["name"], "path": path})
+
     return folders
 
 

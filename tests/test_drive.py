@@ -173,6 +173,54 @@ class TestSearchFolders:
         call_kwargs = service.files().list.call_args[1]
         assert "PARENT_123" in call_kwargs["q"]
 
+    def test_resolves_shortcut_to_folder(self):
+        """When no real folder matches, a shortcut pointing to a folder is returned."""
+        service = _mock_service()
+        # First list() call: folder search → empty
+        # Second list() call: shortcut search → one shortcut pointing to TARGET_ID
+        service.files().list().execute.side_effect = [
+            {"files": []},
+            {
+                "files": [
+                    {
+                        "id": "SC_ID",
+                        "name": "Acme",
+                        "shortcutDetails": {
+                            "targetId": "TARGET_ID",
+                            "targetMimeType": _FOLDER_MIME,
+                        },
+                    }
+                ]
+            },
+        ]
+        service.files().get().execute.return_value = {"name": "Acme", "parents": []}
+        result = search_folders(service, "Acme")
+        assert len(result) == 1
+        assert result[0]["id"] == "TARGET_ID"
+
+    def test_deduplicates_shortcut_and_real_folder(self):
+        """When both a real folder and a shortcut point to the same ID, return it once."""
+        service = _mock_service()
+        service.files().list().execute.side_effect = [
+            {"files": [{"id": "FOLDER_ID", "name": "Acme", "parents": []}]},
+            {
+                "files": [
+                    {
+                        "id": "SC_ID",
+                        "name": "Acme",
+                        "shortcutDetails": {
+                            "targetId": "FOLDER_ID",
+                            "targetMimeType": _FOLDER_MIME,
+                        },
+                    }
+                ]
+            },
+        ]
+        service.files().get().execute.return_value = {"name": "Acme", "parents": []}
+        result = search_folders(service, "Acme")
+        assert len(result) == 1
+        assert result[0]["id"] == "FOLDER_ID"
+
 
 # ---------------------------------------------------------------------------
 # get_or_create_folder
