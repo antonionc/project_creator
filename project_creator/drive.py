@@ -11,6 +11,8 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from project_creator.verbose import is_verbose
+
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 _SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 _SPREADSHEET_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -91,6 +93,9 @@ def search_folders(
     if parent_id:
         q += f" and '{parent_id}' in parents"
 
+    if is_verbose():
+        print(f"[drive] folder query: {q!r}  parent_id={parent_id!r}")
+
     results = service.files().list(
         q=q,
         fields="files(id,name,parents)",
@@ -103,10 +108,19 @@ def search_folders(
         path = _get_folder_path(service, f["id"])
         folders.append({"id": f["id"], "name": f["name"], "path": path})
 
+    if is_verbose():
+        print(f"[drive] real folders found: {len(folders)}")
+        for fo in folders:
+            print(f"  folder id={fo['id']} name={fo['name']!r} path={fo['path']!r}")
+
     # Also search for shortcuts pointing to folders with this name.
     q_sc = f"mimeType='{_SHORTCUT_MIME}' and name='{escaped}' and trashed=false"
     if parent_id:
         q_sc += f" and '{parent_id}' in parents"
+
+    if is_verbose():
+        print(f"[drive] shortcut query: {q_sc!r}  parent_id={parent_id!r}")
+
     sc_results = service.files().list(
         q=q_sc,
         fields="files(id,name,shortcutDetails)",
@@ -114,15 +128,36 @@ def search_folders(
         **_LIST_KWARGS,
     ).execute()
 
+    if is_verbose():
+        print(f"[drive] shortcuts found: {len(sc_results.get('files', []))}")
+
     seen_ids = {f["id"] for f in folders}
     for sc in sc_results.get("files", []):
         details = sc.get("shortcutDetails", {})
         target_id = details.get("targetId")
         target_mime = details.get("targetMimeType", "")
-        if target_id and target_mime == _FOLDER_MIME and target_id not in seen_ids:
-            seen_ids.add(target_id)
-            path = _get_folder_path(service, target_id)
-            folders.append({"id": target_id, "name": sc["name"], "path": path})
+        if is_verbose():
+            print(f"  shortcut id={sc['id']} name={sc['name']!r} details={details!r}")
+        if not target_id:
+            if is_verbose():
+                print(f"    -> skipped: shortcutDetails missing targetId")
+            continue
+        if target_mime != _FOLDER_MIME:
+            if is_verbose():
+                print(f"    -> skipped: targetMimeType={target_mime!r} (expected folder)")
+            continue
+        if target_id in seen_ids:
+            if is_verbose():
+                print(f"    -> skipped: target_id already in results")
+            continue
+        seen_ids.add(target_id)
+        path = _get_folder_path(service, target_id)
+        folders.append({"id": target_id, "name": sc["name"], "path": path})
+        if is_verbose():
+            print(f"    -> accepted: target_id={target_id} path={path!r}")
+
+    if is_verbose():
+        print(f"[drive] search_folders total results: {len(folders)}")
 
     return folders
 
